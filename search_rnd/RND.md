@@ -444,11 +444,13 @@ and load tests.
    retention behaviour, queue bounds, and graceful shutdown match the documented
    durability contract.
 
-## 9. Hardened design rules — pitfalls to avoid
+## 9. Research-derived design rules — pitfalls to avoid
 
-Each rule below was validated the hard way: it is cheaper to design around
-than to debug after the fact. Treat them as forward requirements for the
-final project, not optional notes.
+The following rules synthesize the most relevant failure modes identified
+during the requirements review, PostgreSQL study, and architecture comparison.
+They are design recommendations for the future implementation. Claims that
+depend on workload shape or performance remain hypotheses until reproduced by
+this project's own tests under the stated Docker limits.
 
 ### 9.1 Durability
 
@@ -462,12 +464,11 @@ final project, not optional notes.
 - Every configuration comment must describe the design that actually exists.
   A setting justified by an architecture that has since been replaced (for
   example an ack-before-durable buffer that no longer exists) is a trap for
-  the next reader and for the grader.
-- Keep exactly one source of truth for PostgreSQL tuning: the compose service
-  command line. Not `ALTER SYSTEM` from application code (it fails silently
-  inside the implicit transaction node-postgres wraps around multi-statement
-  queries), and not per-connection `SET` handlers (they race the first real
-  query and cost a round-trip per connection).
+  future maintenance and design review.
+- Keep exactly one visible source of truth for PostgreSQL tuning, preferably
+  the compose service command line. Avoid mixing it with application-driven
+  `ALTER SYSTEM` or asynchronous per-connection setup, because configuration
+  can then fail, race startup queries, or become contradictory across files.
 
 ### 9.2 Partitioning and retention
 
@@ -475,9 +476,9 @@ final project, not optional notes.
   window of past days plus a small future window — before traffic arrives, or
   define and document an explicit alternative policy (reject outside-window
   timestamps, or implement a bounded historical-partition policy). Silently
-  letting historical rows fall into a `DEFAULT` partition defeats partition
-  pruning and escapes retention forever. The graded dataset is described as
-  roughly one month of data: assume backdated timestamps.
+  letting historical rows accumulate in a `DEFAULT` partition can defeat
+  partition pruning and retention. Because the brief describes approximately
+  one month of data, the benchmark must include backdated timestamps.
 - Every pre-aggregated table needs its own retention policy, executed in the
   same maintenance job that drops raw partitions. Dropping raw partitions must
   never leave old rollup counts queryable forever.
@@ -496,10 +497,9 @@ final project, not optional notes.
   JSON permits them, PostgreSQL `text` does not.
 - Normalize each timestamp exactly once, at validation time, to a canonical
   ISO-8601 UTC string, and use that same string for the COPY row, the rollup
-  bucket, and the pagination cursor. Never let JavaScript and PostgreSQL parse
-  the same input independently: `Date.parse` interprets zone-less strings as
-  local time while PostgreSQL uses its session timezone, which silently
-  mis-buckets rollup counters with no error anywhere.
+  bucket, and the pagination cursor. Do not let JavaScript and PostgreSQL parse
+  ambiguous zone-less forms independently; require an explicit offset and
+  verify that both layers use the same normalized instant.
 
 ### 9.4 Query correctness
 
@@ -559,10 +559,11 @@ final project, not optional notes.
   test, because it is the only thing standing between the current code and a
   future merge that re-opens pollution.
 
-## 10. Required best practices — what to preserve
+## 10. Candidate best practices for implementation
 
-These patterns are proven for this problem shape and must survive future
-refactors:
+These patterns currently offer the strongest fit for the requirements and
+resource envelope. The core correctness rules should be preserved; optional
+performance structures must earn their place through reproducible benchmarks.
 
 1. **Group-commit acknowledgement.** Resolve an ingest request only after the
    transaction carrying its rows commits. "Accepted" and "persisted" are the
@@ -572,13 +573,15 @@ refactors:
    ceilings on queued work; when full, respond `503` + `Retry-After` — never a
    false `200` for uncommitted rows and never a `400` for server-side
    saturation.
-3. **Transactional rollup.** Update pre-aggregated counters in the same
-   transaction as the raw COPY so the rollup can never drift; sort the upsert
-   rows by key so concurrent transactions take row locks in the same order.
-4. **One-second rollup granularity.** The finest exposed bucket is 1 minute
-   and every coarser bucket is an exact multiple, so partial edge buckets stay
-   index-assisted. Set `fillfactor` and aggressive autovacuum thresholds on
-   the update-hot rollup table to keep updates HOT.
+3. **Transactional rollup, if required.** If pre-aggregated counters are added,
+   update them in the same transaction as the raw `COPY` so committed raw data
+   and counts remain consistent. Sorting upsert rows by key gives concurrent
+   transactions a consistent lock order and reduces deadlock risk.
+4. **Fine-grained rollup candidate.** A one-second rollup is worth testing
+   because the exposed buckets are exact multiples of a second and arbitrary
+   range edges can be answered from small raw slices. Its cardinality, write
+   amplification, `fillfactor`, and autovacuum behaviour must be measured
+   before it becomes part of the baseline design.
 5. **Split connection pools by role.** A small write pool with an acquire
    timeout, a read pool with a server-side `statement_timeout` (an abandoned
    HTTP request does not cancel its PostgreSQL query), and a separate
@@ -597,18 +600,18 @@ refactors:
 9. **Ordered graceful shutdown.** Stop accepting → drain the pipeline →
    close pools, idempotent across repeated signals, bounded by a hard timeout
    so a stuck database cannot hang the process forever.
-10. **Runtime flags sized for the container, not the host.** Heap cap below
-    the cgroup limit, `--max-semi-space-size` chosen together with the heap
-    cap, `UV_THREADPOOL_SIZE` and `--v8-pool-size` pinned because CPU-count
-    detection sees the host; the same reasoning makes
-    `max_parallel_workers_per_gather=0` correct on the database side.
+10. **Runtime settings sized for the container.** Keep the V8 heap cap below
+    the cgroup memory limit and leave room for native buffers, request bodies,
+    sockets, and driver state. Do not tune `UV_THREADPOOL_SIZE`, V8 worker
+    flags, or PostgreSQL parallelism from CPU-count assumptions alone; profile
+    the actual constrained container and change one setting at a time.
 11. **Error mapping that distinguishes client faults from server
     conditions.** `400` only for genuinely invalid input; statement timeouts,
     pool exhaustion, and backpressure are `503` + `Retry-After` so saturation
     is never misreported as client error volume.
-12. **CI that proves the zero-config contract.** Build, typecheck, unit
-    tests, then a compose-up contract smoke test covering every required
-    endpoint with mixed valid/invalid input, tearing down on failure.
+12. **CI for the zero-config contract.** Build, typecheck, and run unit tests,
+    followed by a compose-up contract smoke test covering every required
+    endpoint with mixed valid/invalid input and reliable teardown on failure.
 13. **Measurement discipline.** Report p50/p95/p99, change one variable at a
     time, and never benchmark an empty range.
 
@@ -636,8 +639,101 @@ refactors:
   day rather than issuing one giant `DELETE` — the same reasoning that drives
   partition drops.
 
-## CHANGES
+## 12. Throughput and latency — requirements and hypotheses
 
-- 2026-08-15: Added section 9 (hardened design rules — pitfalls to avoid),
-  section 10 (required best practices), section 11 (additional ideas), and
-  this CHANGES section. No existing sections were edited.
+This section translates the brief into concrete performance experiments. The
+acceptance thresholds come from the project requirements; architectural and
+tuning statements are research hypotheses until the repository contains a
+reproducible benchmark, raw results, and resource measurements that support
+them.
+
+### 12.1 Validate sustained throughput
+
+- The pipeline must hold the required target for the complete measurement
+  window, not merely reach it briefly. Exercise steady load and, where the
+  evaluator uses them, stress ramps, spikes, and breakpoint tests so queue
+  growth or throughput decay cannot hide behind an average.
+- Compare per-request multi-row `INSERT` with a bounded `COPY FROM STDIN`
+  group-commit pipeline under the same workload. PostgreSQL's bulk-ingestion
+  model makes `COPY` the leading candidate, but the final document must report
+  this project's own sustained throughput and latency rather than importing a
+  ratio from another environment.
+
+### 12.2 Validate read-after-write visibility
+
+- Newly accepted records must become queryable within the stated freshness
+  window during active ingestion. Record the visibility success rate and
+  delay distribution. Group commit should make rows visible when success is
+  returned, but that property still needs an end-to-end test through the read
+  API.
+
+### 12.3 p95 latency decides thresholds
+
+- Scenarios pass or fail on p95, not average. Ingestion p95 must stay in the
+  documented acceptance range while the throughput target is sustained.
+  Record p50 and p99 as diagnostic context rather than inventing an ingestion
+  latency threshold that the brief does not state.
+- Aggregate p95 must remain below the brief's one-second target during active
+  ingestion. Tens of milliseconds would provide useful headroom, but it is not
+  a stated requirement. Test direct partitioned SQL first, then compare indexes,
+  a database rollup, and any bounded cache if the direct path misses the target.
+
+### 12.4 Every required endpoint must exist
+
+- An unimplemented endpoint forfeits correctness points outright. Implement
+  every required endpoint even in naive form first; optimise after.
+
+### 12.5 Operational acceptance remains part of correctness
+
+- Zero-config startup, health checks, migration order, clean shutdown, and
+  restart safety are part of the deliverable, not secondary polish. Verify them
+  in the same clean-compose workflow used for contract testing.
+
+### 12.6 Resource envelope: headroom is the design goal
+
+- No universal CPU percentage should be assumed in advance. The implementation
+  should stay below both memory limits without repeated garbage-collection or
+  database-memory pressure and should retain enough CPU headroom for concurrent
+  reads, checkpoints, autovacuum, and short traffic spikes.
+
+### 12.7 Read headroom is part of the throughput budget
+
+- Concurrent read checks run while ingestion is at full rate. If the
+  database saturates on the write path, read-after-write success collapses
+  and the visibility checks fail. Deliberately leave database CPU headroom
+  for reads and measure both paths together rather than optimizing ingestion
+  in isolation.
+- Fast acceptance must be paired with a read path fast enough to verify it
+  within the freshness window. Accepting faster than the read path can prove
+  visibility backfires: every accepted row must be queryable quickly, not
+  just eventually.
+
+### 12.8 Batch and recent-aggregate experiments
+
+- Compare fixed batch triggers (entry count, byte budget, and maximum delay)
+  with a simple adaptive strategy at the target offered rate. Prefer the
+  simplest configuration that repeatedly meets throughput, p95 latency, memory,
+  and freshness requirements; do not claim an order-of-magnitude advantage
+  without retained results.
+- A bounded in-process recent-window aggregate cache is an optional experiment,
+  not the default architecture. It may reduce recent-query latency, but it also
+  consumes application memory, needs startup hydration, and creates recovery and
+  consistency questions. PostgreSQL remains authoritative, and a database
+  rollup is the less volatile comparison candidate.
+
+### 12.9 Treat read-path correctness as an independent gate
+
+- Throughput cannot compensate for incorrect pagination or query results. Treat
+  full-dataset read correctness as an independent acceptance gate.
+- **Never build a pagination cursor from a JavaScript `Date`.** The column
+  stores microseconds and `Date` truncates to milliseconds; every row in the
+  truncated tail is silently skipped, pages come back short, and the walk
+  ends with `next_cursor: null` as though the data were exhausted. Render
+  the cursor timestamp at full precision from the database itself
+  (`to_char(timestamp AT TIME ZONE 'UTC', '...US...')`).
+- Verify pagination at full dataset scale before submission: ingest more
+  than a million rows and walk the cursor to the end, asserting
+  `next_cursor` only becomes null at the true end of the data. Compare the
+  complete cursor walk against a trusted database count for the same filters.
+- Read headroom in the database buys nothing if the read path itself is
+  wrong: CPU headroom prevents contention, it does not fix correctness.
