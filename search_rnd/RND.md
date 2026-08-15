@@ -367,6 +367,61 @@ Useful conclusions:
 8. Keep rollup tables as a fallback only if direct aggregation misses the p95 target
    after query, statistics, and index tuning.
 
+### Further implementation conclusions
+
+The following refinements make the recommended direction more concrete. They
+remain design hypotheses until they are verified by this project's own contract
+and load tests.
+
+- A group-commit pipeline is preferable to a fire-and-forget worker: collect
+  valid rows from several requests into a bounded batch, `COPY` it inside one
+  transaction, and resolve every affected request only after that transaction
+  commits. A hard pending-row **and byte** limit is still needed for a database
+  outage; return `503` with `Retry-After` rather than retaining unbounded data
+  in the 256 MB application container.
+- If an aggregate rollup is introduced, write its counter changes in the same
+  transaction as the raw rows so it cannot permanently diverge after a failed
+  batch or retry. Give every rollup table its own retention policy. A raw-table
+  partition drop alone must not leave old rollup counts queryable forever.
+- A one-second `(timestamp, service, level)` rollup can make arbitrary
+  time-range edges exact while serving whole seconds from compact counts. It is
+  not a default: high service cardinality can make it nearly as large and
+  write-intensive as the raw log table. Direct aggregation is the baseline;
+  add a rollup only when measured p95 requires it.
+- Do not silently send late or historical records to a default partition that
+  is exempt from normal partition pruning and retention drops. Pre-create the
+  permitted historical window, reject records outside a documented window, or
+  implement a bounded explicit historical-partition policy. The chosen path
+  must ensure every accepted record has the same retention guarantee.
+- Keep acknowledgement durability end-to-end: normal WAL-backed tables,
+  `fsync` enabled, and `synchronous_commit=on` for accepted batches. A database
+  `COMMIT` response with asynchronous commit can still lose recently
+  acknowledged data in a crash.
+- Separate the scarce database capacity by role: a small write pool for the
+  `COPY` pipeline, a bounded read pool with a server-side statement timeout,
+  and a small maintenance/health pool. This protects ingestion and liveness
+  from slow user queries. Under one PostgreSQL CPU, a large read pool merely
+  creates CPU and memory contention; start with only a few read connections.
+- Treat `work_mem` as per-operation, per-backend memory, not a server-wide
+  allocation. Keep it low initially and measure temporary files before raising
+  it. Avoid configuration justifications based on host CPU-count detection;
+  normal Node HTTP and PostgreSQL socket I/O do not become faster merely by
+  increasing application threads.
+- Strict input parsing is part of resource safety and contract correctness:
+  enforce maximum body, batch, field, attribute-count, and rejection-response
+  sizes; validate timestamps as the documented ISO-8601 form; parse limits and
+  cursor IDs strictly rather than accepting numeric prefixes, decimal IDs, or
+  permissive date strings.
+- Keep aggregation counters as `BIGINT` through SQL and JSON conversion. A
+  32-bit SQL count can overflow long before an operational log service reaches
+  its practical retention horizon.
+- Preserve the useful parts of manual `COPY` preparation: validate before
+  enqueueing, escape the selected `COPY` format correctly, avoid unnecessary
+  object copies on the ingestion hot path, and keep SQL construction separated
+  from HTTP handlers. These optimizations are secondary to correctness and
+  must be covered by tests for unusual strings, equal timestamps, failed
+  batches, shutdown draining, and backpressure.
+
 ## 8. Before implementation begins
 
 1. Choose the HTTP framework after a small, comparable prototype or focused study.
@@ -383,3 +438,206 @@ Useful conclusions:
    ingestion and query latency, CPU/RAM, WAL volume, checkpoint behaviour,
    temporary-file usage, data/index size, buffer activity, and query plans before
    adding optional features.
+8. If considering a rollup, benchmark its raw-write, index, WAL, autovacuum, and
+   retention costs against direct aggregation before committing to it.
+9. Add crash/restart and database-stall tests that prove acknowledged records,
+   retention behaviour, queue bounds, and graceful shutdown match the documented
+   durability contract.
+
+## 9. Hardened design rules — pitfalls to avoid
+
+Each rule below was validated the hard way: it is cheaper to design around
+than to debug after the fact. Treat them as forward requirements for the
+final project, not optional notes.
+
+### 9.1 Durability
+
+- Keep `fsync`, WAL, and `synchronous_commit=on` for acknowledged batches.
+  Any configuration that weakens commit durability — `synchronous_commit=off`,
+  unlogged tables, asynchronous commit — invalidates the "200 only after a
+  durable commit" contract. A throughput gain that contradicts the documented
+  reliability contract fails the reliability requirement; if such a setting is
+  ever evaluated experimentally, it must be reverted before submission and the
+  documentation updated.
+- Every configuration comment must describe the design that actually exists.
+  A setting justified by an architecture that has since been replaced (for
+  example an ack-before-durable buffer that no longer exists) is a trap for
+  the next reader and for the grader.
+- Keep exactly one source of truth for PostgreSQL tuning: the compose service
+  command line. Not `ALTER SYSTEM` from application code (it fails silently
+  inside the implicit transaction node-postgres wraps around multi-statement
+  queries), and not per-connection `SET` handlers (they race the first real
+  query and cost a round-trip per connection).
+
+### 9.2 Partitioning and retention
+
+- Pre-create partitions across the whole live window — the full retention
+  window of past days plus a small future window — before traffic arrives, or
+  define and document an explicit alternative policy (reject outside-window
+  timestamps, or implement a bounded historical-partition policy). Silently
+  letting historical rows fall into a `DEFAULT` partition defeats partition
+  pruning and escapes retention forever. The graded dataset is described as
+  roughly one month of data: assume backdated timestamps.
+- Every pre-aggregated table needs its own retention policy, executed in the
+  same maintenance job that drops raw partitions. Dropping raw partitions must
+  never leave old rollup counts queryable forever.
+- A `DEFAULT` partition, if kept as a safety net, must be monitored (row
+  count) and treated as a defect whenever it is non-empty.
+
+### 9.3 Validation must mirror database constraints
+
+- Every column constraint is also a validation rule, enforced per entry
+  before enqueueing. A single entry that passes API validation but fails a
+  database constraint (column length, control characters, an unparsable
+  timestamp) aborts the entire group-commit transaction and rejects every
+  valid entry in the same batch — a direct violation of the
+  partial-acceptance contract.
+- Reject control characters the database cannot store (for example `\u0000`):
+  JSON permits them, PostgreSQL `text` does not.
+- Normalize each timestamp exactly once, at validation time, to a canonical
+  ISO-8601 UTC string, and use that same string for the COPY row, the rollup
+  bucket, and the pagination cursor. Never let JavaScript and PostgreSQL parse
+  the same input independently: `Date.parse` interprets zone-less strings as
+  local time while PostgreSQL uses its session timezone, which silently
+  mis-buckets rollup counters with no error anywhere.
+
+### 9.4 Query correctness
+
+- Literal substring search must not treat user input as a pattern. Escape
+  `%`, `_`, and `\` (or use a position-based match), otherwise a query like
+  `q=100%` matches everything.
+- Validate cursors strictly. Accepting scientific notation, empty IDs, or any
+  string that passes a loose JavaScript numeric check but fails a `bigint`
+  cast turns a `400` into a `500`.
+- Parse `limit` strictly (no numeric prefixes), matching the documented input
+  contract.
+- Keep aggregation counters `BIGINT` end to end through SQL and JSON. A
+  32-bit cast is a latent overflow, not a theoretical one.
+
+### 9.5 Benchmarks and evidence
+
+- Never hardcode time ranges in benchmark scripts. Derive `since`/`until`
+  from the data being measured — a hardcoded window goes stale, silently
+  measures an empty range, and reports meaningless millisecond latencies.
+- The batch size the shipped benchmark drives must be the batch size the
+  reported numbers were measured at. A performance table is only credible if
+  the repository's own scripts can reproduce it.
+- Benchmarks must include backdated timestamps. A generator that only sends
+  "now" never exercises the partition-window or retention code paths.
+
+### 9.6 Operations
+
+- Liveness checks must not share a pool with DDL. A long-running
+  `DETACH ... CONCURRENTLY` or migration must not queue `/health` behind it.
+  Give every pool an explicit acquire timeout so saturation fails fast
+  instead of hanging.
+- Use a restart policy that survives a process abort; a single heap abort
+  must not leave the service dead for the remainder of a run.
+- Do not publish the database port to the host and do not ship hardcoded
+  credentials — keep the attack surface minimal even in a demo posture.
+- Keep a `.dockerignore` that excludes `node_modules` and `.git` from the
+  build context; otherwise a local install silently bloats the context and
+  cache-busts every build.
+- Parse environment variables strictly. `Number(x) || default` silently
+  replaces `0` (and any garbage) with the default.
+
+### 9.7 Submission hygiene
+
+- Check `.gitignore` before committing. A broad pattern (for example `*.md`)
+  can exclude files the spec explicitly requires (the README). Verify what a
+  clean clone actually contains — the submission is the repository, not the
+  working tree.
+- Every documented claim that names a current default or architecture must be
+  updated when the code changes. A stale limitations section that contradicts
+  the headline results reads as a contradiction to a grader, not as history.
+
+### 9.8 Prototype-pollution protection
+
+- If the JSON parser's prototype-pollution guards are disabled for CPU
+  reasons, the safety invariant that makes that acceptable — parsed input is
+  never merged into existing objects — must be written down and covered by a
+  test, because it is the only thing standing between the current code and a
+  future merge that re-opens pollution.
+
+## 10. Required best practices — what to preserve
+
+These patterns are proven for this problem shape and must survive future
+refactors:
+
+1. **Group-commit acknowledgement.** Resolve an ingest request only after the
+   transaction carrying its rows commits. "Accepted" and "persisted" are the
+   same by construction, and memory is bounded by in-flight request
+   concurrency rather than a guessed buffer constant.
+2. **Bounded batching with explicit backpressure.** Hard row *and* byte
+   ceilings on queued work; when full, respond `503` + `Retry-After` — never a
+   false `200` for uncommitted rows and never a `400` for server-side
+   saturation.
+3. **Transactional rollup.** Update pre-aggregated counters in the same
+   transaction as the raw COPY so the rollup can never drift; sort the upsert
+   rows by key so concurrent transactions take row locks in the same order.
+4. **One-second rollup granularity.** The finest exposed bucket is 1 minute
+   and every coarser bucket is an exact multiple, so partial edge buckets stay
+   index-assisted. Set `fillfactor` and aggressive autovacuum thresholds on
+   the update-hot rollup table to keep updates HOT.
+5. **Split connection pools by role.** A small write pool with an acquire
+   timeout, a read pool with a server-side `statement_timeout` (an abandoned
+   HTTP request does not cancel its PostgreSQL query), and a separate
+   DDL/health pool without a statement timeout so retention and liveness never
+   queue behind user traffic.
+6. **Parameterized SQL everywhere.** Interpolated identifiers (JSON attribute
+   keys, `group_by` columns) are validated against an allow-list in both the
+   HTTP layer and the SQL-building layer, never trusted from the caller.
+7. **Keyset pagination on `(timestamp DESC, id DESC)`** with a `limit + 1`
+   probe row. The cursor is anchored to the last row actually returned — never
+   the probe — and its timestamp is rendered at microsecond precision by
+   PostgreSQL, not truncated by a JavaScript `Date`.
+8. **Correct `COPY` text-format escaping.** Single-pass regex, a cheap
+   test-before-replace on the hot path, and a non-global regex for the
+   `.test()` probe (global regexes advance `lastIndex` and alternate).
+9. **Ordered graceful shutdown.** Stop accepting → drain the pipeline →
+   close pools, idempotent across repeated signals, bounded by a hard timeout
+   so a stuck database cannot hang the process forever.
+10. **Runtime flags sized for the container, not the host.** Heap cap below
+    the cgroup limit, `--max-semi-space-size` chosen together with the heap
+    cap, `UV_THREADPOOL_SIZE` and `--v8-pool-size` pinned because CPU-count
+    detection sees the host; the same reasoning makes
+    `max_parallel_workers_per_gather=0` correct on the database side.
+11. **Error mapping that distinguishes client faults from server
+    conditions.** `400` only for genuinely invalid input; statement timeouts,
+    pool exhaustion, and backpressure are `503` + `Retry-After` so saturation
+    is never misreported as client error volume.
+12. **CI that proves the zero-config contract.** Build, typecheck, unit
+    tests, then a compose-up contract smoke test covering every required
+    endpoint with mixed valid/invalid input, tearing down on failure.
+13. **Measurement discipline.** Report p50/p95/p99, change one variable at a
+    time, and never benchmark an empty range.
+
+## 11. Additional ideas to consider
+
+- Extract one validation module that owns both the API contract and the
+  database constraints (lengths, charset) so the two can never drift; the
+  route handler and the SQL layer both call it.
+- Add a property-style round-trip test for the COPY serialization: serialize
+  a log entry, parse the TSV back, assert equality — it covers escaping edge
+  cases (tabs, newlines, backslashes, Unicode) that unit tests miss.
+- Track schema changes in a migration version table instead of relying purely
+  on idempotent `IF NOT EXISTS` DDL, so removed objects (old indexes,
+  superseded tables) converge provably on restart.
+- Add a read-after-write freshness check to the contract test: ingest, then
+  poll `GET /logs` until the row is visible, asserting the 20-second
+  freshness bound.
+- The planned `GET /metrics` endpoint should expose pipeline statistics —
+  pending rows, committed batches, retries, flush latency — with no
+  high-cardinality labels or values.
+- Document the database-stall path in the runbook: what the client sees
+  (`503` + `Retry-After`), what the operator sees (bounded memory, retry
+  loop), and how the service recovers when PostgreSQL returns.
+- When the rollup table gains its retention cleanup, batch the deletes per
+  day rather than issuing one giant `DELETE` — the same reasoning that drives
+  partition drops.
+
+## CHANGES
+
+- 2026-08-15: Added section 9 (hardened design rules — pitfalls to avoid),
+  section 10 (required best practices), section 11 (additional ideas), and
+  this CHANGES section. No existing sections were edited.
