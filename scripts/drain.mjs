@@ -5,10 +5,10 @@
  * set, under a deadline, and reports pages/second, rows/second and per-page
  * latency percentiles.
  *
- * This is both a performance measurement and a correctness gate. The load
- * generator verifies freshness by walking pagination to the end inside a fixed
- * window, and that walk is sequential — page N+1 cannot start until page N
- * returns — so completion is governed by:
+ * This is both a performance measurement and a correctness gate. A freshness
+ * walk moves through pagination to the end inside a fixed window, and that
+ * walk is sequential — page N+1 cannot start until page N returns — so
+ * completion is governed by:
  *
  *   records drainable = window (s) x pages/second x page size (rows)
  *
@@ -19,14 +19,25 @@
  *
  * Usage:
  *   node scripts/drain.mjs
- *   BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=599605 node scripts/drain.mjs
+ *   BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=599605 RESULT_PATH=bench/raw/drain.json node scripts/drain.mjs
  */
+
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const baseUrl = process.env.BASE_URL ?? "http://127.0.0.1:8080";
 const pageSize = Number(process.env.PAGE_SIZE ?? 1000);
 const deadlineSeconds = Number(process.env.DEADLINE_SECONDS ?? 30);
 const maxPages = Number(process.env.MAX_PAGES ?? 100000);
 const expectTotal = process.env.EXPECT_TOTAL === undefined ? null : Number(process.env.EXPECT_TOTAL);
+const resultPath = process.env.RESULT_PATH;
+const absoluteResultPath = resultPath === undefined ? undefined : resolve(resultPath);
+if (absoluteResultPath !== undefined) {
+  mkdirSync(dirname(absoluteResultPath), { recursive: true });
+  if (existsSync(absoluteResultPath)) {
+    throw new Error(`RESULT_PATH already exists; choose a new path: ${absoluteResultPath}`);
+  }
+}
 // Filters are passed straight through so the same harness can measure the
 // unfiltered walk, a service-filtered walk, or a hot-attribute walk.
 const filters = process.env.FILTERS ?? "";
@@ -44,6 +55,7 @@ let reachedEnd = false;
 let previousKey = null;
 let orderViolations = 0;
 
+const startedAtIso = new Date().toISOString();
 const startedAt = performance.now();
 const deadlineAt = startedAt + deadlineSeconds * 1000;
 
@@ -98,6 +110,11 @@ function percentile(values, fraction) {
 }
 
 const result = {
+  startedAt: startedAtIso,
+  endedAt: new Date().toISOString(),
+  baseUrl,
+  filters,
+  configuredDeadlineSeconds: deadlineSeconds,
   pageSize,
   pages,
   rows,
@@ -120,9 +137,17 @@ if (expectTotal !== null) {
   result.rowsMatchExpected = seen.size === expectTotal;
 }
 
-console.log(JSON.stringify(result, null, 2));
+const output = `${JSON.stringify(result, null, 2)}\n`;
+if (absoluteResultPath !== undefined) {
+  writeFileSync(absoluteResultPath, output, { flag: "wx" });
+  console.error(`result: ${absoluteResultPath}`);
+}
+process.stdout.write(output);
 
 const failures = [];
+if (!result.withinDeadline) {
+  failures.push(`walk exceeded ${deadlineSeconds}s deadline (${result.elapsedSeconds}s)`);
+}
 if (duplicates > 0) failures.push(`${duplicates} duplicate rows`);
 if (orderViolations > 0) failures.push(`${orderViolations} ordering violations`);
 if (!reachedEnd) failures.push("walk did not reach the true end");

@@ -14,6 +14,10 @@ expired data by dropping monthly partitions. The whole system is designed to
 run under the compose caps in `docker-compose.yml`: **0.5 CPU / 256 MB for the
 application, 1 CPU / 1 GB for PostgreSQL**.
 
+Status (2026-08-16): all operational gates pass; the three query-performance
+targets, historical benchmark raw-data provenance, and measured freshness
+remain open. See the [verification notes](docs/conclusion.md).
+
 ---
 
 ## Quick start
@@ -534,10 +538,15 @@ database configuration.
 
 ## Performance
 
-**All figures below are from `bench/results/final.md` (Phase 5), reproduced by
-the scripts in this repository.** The measurement ran on the accumulated
-database (3,001,180 rows at walk time) — larger than any clean re-ingestion
-would produce, so the read-path numbers are the harder case.
+**The figures below are transcribed from `bench/results/final.md`
+(Phase 5).** The shipped scripts emit the same kinds of metrics, but the exact
+ingestion and drain console summaries behind this table were not retained in
+`bench/raw/`. The retained raw files support the storage and buffer fields; the
+resource CSV combines multiple capture attempts and is not a clean sampling
+window. See the [verification notes](docs/conclusion.md). The
+measurement ran on the accumulated database (3,001,180 rows at walk time) —
+larger than any clean re-ingestion would produce, so the recorded read-path
+case is harder than a smaller clean dataset.
 
 **Environment.** The capped compose stack: application 0.5 CPU / 256 MB,
 PostgreSQL 1 CPU / 1 GB (`docker-compose.yml`), running under Docker on a
@@ -558,18 +567,22 @@ and reports pages/s, rows/s and per-page percentiles — and it **fails the run*
 on duplicates, ordering violations, or a unique-row count that does not match
 `EXPECT_TOTAL`. Page-query cost:
 `EXPLAIN (ANALYZE, BUFFERS)` against the live database (`docs/explain/`).
-Resources: `scripts/capture-resources.mjs` samples `docker stats` once per
-second during the load window.
+Resources: `scripts/capture-resources.mjs` samples both containers concurrently
+during the load window and records the actual elapsed time and sample count.
+Every raw-output path is create-only, so repeating a run name fails instead of
+silently concatenating or overwriting evidence.
 
 **Reproduce:**
 
 ```bash
 HOST_PORT=8081 docker compose up -d --build --wait
 
-BASE_URL=http://127.0.0.1:8081 DURATION_SECONDS=30 CONCURRENCY=64 BATCH_SIZE=200 npm run bench
+RUN_NAME=recapture-20260816 DURATION_SECONDS=35 npm run bench:capture &
+CAPTURE_PID=$!
+BASE_URL=http://127.0.0.1:8081 DURATION_SECONDS=30 CONCURRENCY=64 BATCH_SIZE=200 RESULT_PATH=bench/raw/recapture-20260816-ingest.json npm run bench
+wait "$CAPTURE_PID"
 COUNT=$(docker compose exec -T postgres psql -U logger -d logs -tAc "SELECT count(*) FROM logs;" | tr -d '[:space:]')
-BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT npm run bench:drain
-RUN_NAME=my-run DURATION_SECONDS=40 npm run bench:capture
+BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT DEADLINE_SECONDS=30 RESULT_PATH=bench/raw/recapture-20260816-drain.json npm run bench:drain
 ```
 
 **Results (final):**
@@ -579,22 +592,30 @@ RUN_NAME=my-run DURATION_SECONDS=40 npm run bench:capture
 | Ingestion throughput | **21,187 logs/s** sustained over 30 s, 64 workers, batch 200 (requirement ≥ 15,000 — met with ~40% margin) |
 | Accepted / errors | 649,600 accepted, **0 errors** |
 | Ingest latency p50 / p95 / p99 | 564 / 847 / 915 ms (per whole batch of 200) |
-| Aggregate p95, concurrent with ingestion | **101 ms** (requirement: < 1 s — met) |
-| Drain rate | 86.8 pages/s, 86,761 rows/s at 3,001,180 rows |
+| Aggregate p95, concurrent with ingestion | **101 ms** (requirement < 1 s met; internal double-digit-ms target missed) |
+| Drain rate | 86.8 pages/s, 86,761 rows/s at 3,001,180 rows; true end in 34.6 s, so the internal 30 s window was missed |
 | Page latency p50 / p95 / p99 | 9.4 / **16.1** / 75.7 ms |
 | Walk integrity | 3,002 pages to the true end; unique rows = `COUNT(*)` exactly; 0 duplicates, 0 ordering violations — at 3× the required volume, across two digit-length boundaries |
 | PostgreSQL-side page execution | ~1.7 ms (`EXPLAIN (ANALYZE, BUFFERS)`: `Limit` over `Merge Append` of backward index scans, ~34 shared-buffer hits, no sort node) |
 | Application CPU / RSS under load | ~41–50% of 0.5 CPU / 41–55 MB of 256 MB — no restart, large headroom |
 | PostgreSQL CPU / RSS under load | ~45–49% of 1 CPU / ~327 MB of 1 GB — deliberate read headroom |
-| Storage at 3 M rows | **1,495 MB** total, **514 MB of it indexes** (34%) — reported honestly |
+| Recorded storage snapshot at 3 M rows | **1,495 MB** total, **514 MB of it indexes** (34%); retained in the legacy summary but not independently reconstructible |
 | Buffer hit ratio | 97.3% |
 
-**Target status — written down because it is missed:** the plan target of
-≤ 8 ms p95 for a 1,000-row page is **missed at 16.1 ms**. PostgreSQL executes
-the same page in ~1.7 ms, so the remaining time is app-side materialisation,
-JSON serialisation, the HTTP write inside the 0.5-CPU application, plus
-host→container overhead. The experiment queue attacked exactly this gap;
-the record is in `bench/results/experiments.md`.
+**Internal query-target status — all three were missed:**
+
+- The 3,002-page walk completed in 34.6 seconds. The evaluator-shaped window
+  is 30 seconds, which required at least 100.1 pages/s; 86.8 pages/s would cover
+  only about 2.604 M rows in that window.
+- The plan target of ≤ 8 ms p95 for a 1,000-row page was missed at 16.1 ms.
+- Concurrent aggregate p95 was 101 ms, narrowly outside the internal
+  double-digit-ms target, while still comfortably meeting the specification's
+  <1 s requirement.
+
+PostgreSQL executes the same page in ~1.7 ms, so the remaining page time is
+app-side materialisation, JSON serialisation, the HTTP write inside the
+0.5-CPU application, plus host→container overhead. The experiment queue
+attacked exactly this gap; the record is in `bench/results/experiments.md`.
 
 **Bottlenecks found and optimisations applied:**
 
@@ -603,9 +624,10 @@ the record is in `bench/results/experiments.md`.
    keyset predicate compared `id` as `bigint` — rows sharing a timestamp were
    silently skipped mid-walk while the response reported a clean
    `next_cursor`, and the plan lost its pure index scan. The drain harness
-   measured **18 ordering violations before, 0 after**; both sort columns are
-   now table-qualified, with a comment in the query explaining why they must
-   stay that way.
+   measured **18 ordering violations before, 0 after**; this historical figure
+   is recorded in `plan/HANDOFF.md` and has no retained raw capture. Both sort
+   columns are now table-qualified, with a comment in the query explaining why
+   they must stay that way.
 2. **Crash loop on database loss (fixed).** Startup database work ran at
    import time, so an unreachable PostgreSQL rejected the bootstrap and the
    restart policy returned the process to the same failing state. Startup now
@@ -625,10 +647,15 @@ the record is in `bench/results/experiments.md`.
    measured loss in `bench/results/experiments.md`, not kept.
 5. **Open bottleneck (page latency).** 16.1 ms p95 versus ~1.7 ms of
    database-side execution. The honest number stands until it changes.
+6. **Open bottleneck (aggregate tail latency).** The rollup plan is fast in its
+   standalone EXPLAIN capture, but concurrent end-to-end aggregate p95 is
+   101 ms. Plan selection alone does not explain the remaining HTTP tail.
 
-Freshness is structural rather than measured: a `200` from `POST /logs` means
-the rows are committed and queryable, with no background reconciliation to
-fall behind.
+Freshness was **not measured as a delay distribution** in the retained final
+evidence. Structurally, a `200` from `POST /logs` follows commit and there is no
+background reconciliation to fall behind, but that design argument is not a
+numeric performance measurement. The freshness gate therefore remains
+unverified pending a captured probe run.
 
 ---
 
@@ -640,10 +667,11 @@ fall behind.
   backpressure rejection, shutdown draining), and the query path (parser
   strictness, cursor codec signing/filter-binding, predicate building,
   serialisation).
-- **Integration test** (`npm run test:integration`) — `test/integration/`:
-  seeds an expired partition, runs one retention cycle directly (rather than
-  waiting for the one-hour timer), and asserts both the raw rows and the
-  rollup counts are gone.
+- **Integration tests** (`npm run test:integration`) — `test/integration/`:
+  one test compares aligned, unaligned-edge, grouped, and raw aggregate results
+  with direct SQL truth; the other seeds an expired partition, runs one
+  retention cycle directly (rather than waiting for the one-hour timer), and
+  asserts both raw rows and rollup counts are gone.
 - **Contract smoke** (`npm run smoke`) — `scripts/contract-smoke.mjs`, run
   against the live compose stack: health, ingestion with an invalid entry
   rejected by original index while valid siblings are accepted, an
@@ -653,13 +681,15 @@ fall behind.
   a tampered cursor → `400`, an all-invalid batch → `400`, malformed JSON →
   `400`.
 - **Reliability matrix** (`npm run reliability`) —
-  `scripts/reliability-check.mjs`, 72 checks: bad inputs (limits, timestamps,
+  `scripts/reliability-check.mjs`, 73 checks: bad inputs (limits, timestamps,
   cursors, filter values) must produce `4xx` with the required error shape —
   never a `500`, never a crashed process.
-- **Failure drill** (`npm run drill`) — `scripts/failure-drill.sh`, the
-  database-outage rows: stop PostgreSQL, assert every endpoint degrades to
-  `503` + `Retry-After`, assert the application container does **not**
-  restart, assert recovery once the database returns.
+- **Failure drill** (`npm run drill`) — `scripts/failure-drill.sh`: stop
+  PostgreSQL, assert every endpoint degrades to `503` + `Retry-After`, assert
+  the application container does **not** restart, and assert recovery once the
+  database returns; then ingest under load, send repeated `SIGTERM`, require a
+  graceful exit, restart the manually stopped container, and require the
+  persisted-row delta to equal the client-acknowledged count exactly.
 - **Drain harness as a correctness gate** — after any change that could touch
   ordering or cursor logic, run `npm run bench:drain` with `EXPECT_TOTAL` set;
   duplicates, ordering violations, or a mismatched row count fail the run.
@@ -675,10 +705,24 @@ fall behind.
 - **Page latency target not yet met.** ≤ 8 ms p95
   per 1,000-row page is the plan target; measured at 16.1 ms p95. See
   [Performance](#performance).
+- **The final full drain missed the internal deadline.** It reached the true
+  end with correct ordering and counts, but 3,002 pages took 34.6 seconds. At
+  the measured 86.8 pages/s, a 30-second walk reaches only about 2.604 M rows;
+  completing 3,001,180 rows required at least 100.1 pages/s.
+- **Aggregate p95 missed the internal target.** The recorded 101 ms meets the
+  specification's <1 s requirement but is not double-digit milliseconds.
 - **The final measurement ran on an accumulated database** (3 M rows) rather
   than a freshly wiped volume; read-path numbers are therefore the harder
-  case, not the easier one. The shipped scripts reproduce them from any
-  dataset.
+  case, not the easier one. The shipped scripts can repeat the methodology,
+  but the exact final ingestion and drain outputs were not retained under
+  `bench/raw/` for independent reconstruction.
+- **Raw benchmark evidence is incomplete.** The retained resource CSV contains
+  two headers and samples from multiple attempts; the final ingestion, drain,
+  and E1+E2 console summaries are not present in `bench/raw/`. Headline figures
+  should be treated as run records until a clean recapture is retained.
+- **Freshness is unmeasured.** Commit-before-acknowledgement makes immediate
+  visibility the expected behavior, but no final read-after-write delay
+  distribution was captured, so the numeric freshness gate is unverified.
 - **Unaligned aggregate ranges read raw edge slices.** Correct and exact, but
   a range whose edges fall inside minutes costs two raw slice queries on top
   of the rollup interior; `q`/`attr.*` aggregate queries scan raw rows by
@@ -686,8 +730,12 @@ fall behind.
 - **Only configured hot attribute keys are indexed.** `attr.<key>` filters on
   any other key are scans, and `q` is a literal `strpos` scan with no trigram
   support — deliberate (see [Indexes](#indexes)).
-- **Index footprint.** At ~600k rows, indexes are over half the total storage
-  (110 MB of 203 MB). The index budget is an open optimisation-phase item.
+- **Index footprint remains material.** The preliminary ~600k-row snapshot was
+  110 MB of indexes in 203 MB total; the legacy 3 M-row summary records 514 MB
+  of indexes in 1,495 MB total (34%). The old capture script did not traverse
+  the partition tree, so neither historical ratio is independently
+  reconstructible from the shipped raw evidence. New captures emit exact byte
+  counts across every partition.
 - **Default durability profile is not crash-durable.** With `SYNC_COMMIT=off`
   (the default), an unclean PostgreSQL host failure can lose a window of
   acknowledged writes; a `200` remains a committed-and-queryable guarantee.

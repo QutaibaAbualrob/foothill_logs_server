@@ -62,6 +62,36 @@ test("aggregate parser requires valid bounds and a supported bucket", () => {
   assert.throws(() => parseAggregateQuery({ bucket: "1m" }), HttpError);
 });
 
+test("query parsers compare timestamp bounds at nanosecond precision", () => {
+  const reversed = {
+    since: "2026-08-16T12:00:00.000002Z",
+    until: "2026-08-16T12:00:00.000001Z",
+  };
+  const isBadRequest = (error: unknown) => error instanceof HttpError && error.status === 400;
+
+  assert.throws(() => parseLogQuery(reversed, codec), isBadRequest);
+  assert.throws(() => parseAggregateQuery({ ...reversed, bucket: "1m" }), isBadRequest);
+  assert.throws(
+    () =>
+      parseLogQuery(
+        {
+          since: "2026-08-16T12:00:00.000002+02:00",
+          until: "2026-08-16T10:00:00.000001Z",
+        },
+        codec,
+      ),
+    isBadRequest,
+  );
+
+  const ordered = parseAggregateQuery({
+    since: "2026-08-16T12:00:00.000001Z",
+    until: "2026-08-16T12:00:00.000002Z",
+    bucket: "1m",
+  });
+  assert.equal(ordered.filters.since, "2026-08-16T12:00:00.000001Z");
+  assert.equal(ordered.filters.until, "2026-08-16T12:00:00.000002Z");
+});
+
 test("SQL builder binds every user value and never interpolates one", () => {
   const built = buildPredicates(
     {

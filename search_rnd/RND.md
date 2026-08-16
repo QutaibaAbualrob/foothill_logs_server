@@ -2,7 +2,7 @@
 
 > Status: concept and research only. No application, Docker, database, or benchmark
 > implementation exists yet. This document is a working record for the final
-> TypeScript project; it is not the submission README.
+> TypeScript project; it is not the project README.
 >
 > Fact-check revision (2026-08-15): this document now distinguishes the supplied
 > evaluator contract from additional production policies proposed by the R&D.
@@ -137,7 +137,7 @@ other high-cardinality label/value.
 
 | Risk | Why it matters here | Direction |
 | --- | --- | --- |
-| Unbounded input | The API brief gives no maximum batch, message, or attribute size. Fixed 256 MB memory cannot safely buffer unlimited JSON or rejection responses. | Document a safe request limit, or implement streaming JSON parsing; test the load generator's actual batch size before fixing the limit. |
+| Unbounded input | The API brief gives no maximum batch, message, or attribute size. Fixed 256 MB memory cannot safely buffer unlimited JSON or rejection responses. | Document a safe request limit, or implement streaming JSON parsing; measure the actual offered batch size before fixing the limit. |
 | Application CPU | JSON parsing, timestamp validation, error allocation, logging, and serialization share only half a CPU. | Use compiled/lightweight validation, no synchronous work, minimal request logging, and no ORM on ingestion. |
 | PostgreSQL write amplification | Every GIN, trigram, and B-tree index is updated on each insert. | Begin with a small index set, batch with `COPY`, and remove indexes that plans do not use. |
 | Read/write contention | Aggregate scans and GIN maintenance share one PostgreSQL CPU with ingestion. | Keep aggregate SQL set-based, use partition pruning and bounded DB pools, then measure p95 under concurrent load. |
@@ -568,11 +568,11 @@ this project's own tests under the stated Docker limits.
 - Parse environment variables strictly. `Number(x) || default` silently
   replaces `0` (and any garbage) with the default.
 
-### 9.7 Submission hygiene
+### 9.7 Repository hygiene
 
 - Check `.gitignore` before committing. A broad pattern (for example `*.md`)
   can exclude files the spec explicitly requires (the README). Verify what a
-  clean clone actually contains — the submission is the repository, not the
+  clean clone actually contains — the repository is the deliverable, not the
   working tree.
 - Every documented claim that names a current default or architecture must be
   updated when the code changes. A stale limitations section that contradicts
@@ -765,7 +765,7 @@ them.
   design, preserve the database's exact cursor value—for example, render the
   timestamp at full precision in PostgreSQL
   (`to_char(timestamp AT TIME ZONE 'UTC', '...US...')`).
-- Verify pagination at full dataset scale before submission: ingest more
+- Verify pagination at full dataset scale before the final push: ingest more
   than a million rows and walk the cursor to the end, asserting
   `next_cursor` only becomes null at the true end of the data. Compare the
   complete cursor walk against a trusted database count for the same filters.

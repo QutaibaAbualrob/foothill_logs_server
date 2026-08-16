@@ -20,13 +20,13 @@ the next session does not have to re-derive it or re-measure it.
 | 1 | T07 aggregate contract | **partially done** — see §2, item 1 |
 | 1 | T08 retention and health | code present, **untested** — see §2, item 2 |
 | 1 | T09 contract smoke (G1) | **done** — `npm run smoke` |
-| 2 | T10 edge cases (G2) | **done** — `npm run reliability`, 72 checks |
+| 2 | T10 edge cases (G2) | **done** — `npm run reliability`, 73 checks |
 | 2 | T11 failure modes | **done** for the database-outage rows — see §2, item 3 |
 | 3 | T12–T15 bench rig, baseline | **not started** — but see the measurements in §6 |
 | 4 | T16–T22 optimisation | **not started** |
 | 5 | T23 final run | **not started** |
 | 6 | T24 README | **not started — this is the biggest remaining gap** |
-| 6 | T25 submission gate | **not started** |
+| 6 | T25 release gate | **not started** |
 | 6 | T26 video outline | **not started** |
 
 Two local commits sit on top of `e5cc3c1`. **Nothing has been pushed.**
@@ -38,8 +38,8 @@ Two local commits sit on top of `e5cc3c1`. **Nothing has been pushed.**
 
 1. **README (`T24`) — highest priority.** It does not exist. The root
    `README.md` still contains the two words it was created with. It is on the
-   plan's "never cut" list and it is the single largest gap in the submission.
-   The outline is in `06-SUBMISSION-CHECKLIST.md` §4. Real numbers to put in it
+   plan's "never cut" list and it is the single largest gap in the release.
+   The outline is in `06-RELEASE-CHECKLIST.md` §4. Real numbers to put in it
    are in §6 below; anything not measured must be labelled as not measured.
 
 2. **Aggregate exact edge slices (`T07`).** `query/repository.ts` currently
@@ -141,7 +141,7 @@ crash shutdown, "starting up", saturation and pool timeouts as 503 + `Retry-Afte
 ## 5. The tracked PDFs — a decision was made, do not silently reverse it
 
 `search_rnd/books/` holds ~59 MB of copyrighted PDFs, and they are already in
-the pushed history on GitHub. `06-SUBMISSION-CHECKLIST.md` §2 recommends
+the pushed history on GitHub. `06-RELEASE-CHECKLIST.md` §2 recommends
 rewriting history to drop them. **The user was asked and chose to leave them
 entirely as-is.** Removing them now would require a force-push over the public
 remote, so do not do it without asking again.
@@ -205,13 +205,16 @@ HOST_PORT=8081 docker compose up -d --build --wait
 # gates
 npm run typecheck && npm test                      # unit
 BASE_URL=http://127.0.0.1:8081 npm run smoke       # G1 contract
-BASE_URL=http://127.0.0.1:8081 npm run reliability # G2 matrix, 72 checks
+BASE_URL=http://127.0.0.1:8081 npm run reliability # G2 matrix, 73 checks
 HOST_PORT=8081 npm run drill                       # G2 database-outage rows
 
 # measurement
-BASE_URL=http://127.0.0.1:8081 DURATION_SECONDS=30 CONCURRENCY=64 BATCH_SIZE=200 npm run bench
+RUN_NAME=recapture-20260816 DURATION_SECONDS=35 npm run bench:capture &
+CAPTURE_PID=$!
+BASE_URL=http://127.0.0.1:8081 DURATION_SECONDS=30 CONCURRENCY=64 BATCH_SIZE=200 RESULT_PATH=bench/raw/recapture-20260816-ingest.json npm run bench
+wait "$CAPTURE_PID"
 COUNT=$(docker compose exec -T postgres psql -U logger -d logs -tAc "SELECT count(*) FROM logs;" | tr -d '[:space:]')
-BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT npm run bench:drain
+BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT DEADLINE_SECONDS=30 RESULT_PATH=bench/raw/recapture-20260816-drain.json npm run bench:drain
 ```
 
 ---
@@ -220,9 +223,10 @@ BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT npm run bench:
 
 - One variable per experiment; re-run G1 before keeping any Phase 4 change.
 - A target that is missed is written down as missed, with the measured number.
-  The 8 ms page target is missed at 16.1 ms — say so until it is not.
+  The final run missed the 30 s drain window (34.6 s), ≥100 pages/s target
+  (86.8), ≤8 ms page p95 target (16.1 ms), and double-digit aggregate p95
+  target (101 ms) — say so until a retained rerun changes the evidence.
 - Every README figure must be reproducible by a script in this repository.
-- Nothing in the tree should read as though it were written to score points
-  rather than for an engineer. A previous hardcoded `marker` attribute and its
-  "score harness" comment have already been generalised into
-  `HOT_ATTRIBUTE_KEYS`; keep that standard.
+- Keep access-pattern optimisations generic and configurable.
+  `HOT_ATTRIBUTE_KEYS` selects optional partial indexes for measured frequent
+  keys; avoid hardcoded attribute names and fixture-specific terminology.

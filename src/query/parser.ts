@@ -8,6 +8,7 @@ const LEVELS = new Set<string>(LOG_LEVELS);
 const BUCKETS = new Set<Bucket>(["1m", "5m", "1h", "1d"]);
 const GROUPS = new Set<GroupBy>(["service", "level"]);
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const FRACTIONAL_SECONDS = /\.(\d{1,9})(?=Z|[+-]\d{2}:\d{2}$)/;
 
 type RawQuery = Request["query"];
 
@@ -49,7 +50,11 @@ function parseFilters(query: RawQuery): QueryFilters {
   }
   const since = optionalTimestamp(scalar(query.since, "since"), "since");
   const until = optionalTimestamp(scalar(query.until, "until"), "until");
-  if (since !== undefined && until !== undefined && Date.parse(until) < Date.parse(since)) {
+  if (
+    since !== undefined &&
+    until !== undefined &&
+    timestampNanoseconds(until) < timestampNanoseconds(since)
+  ) {
     throw new HttpError(400, "until must not be earlier than since");
   }
   const q = scalar(query.q, "q");
@@ -86,6 +91,12 @@ function optionalTimestamp(value: string | undefined, name: string): string | un
     throw new HttpError(400, `${name} must be a valid ISO 8601 timestamp`);
   }
   return value;
+}
+
+function timestampNanoseconds(value: string): bigint {
+  const fractional = FRACTIONAL_SECONDS.exec(value)?.[1] ?? "";
+  const wholeSecond = value.replace(FRACTIONAL_SECONDS, "");
+  return BigInt(Date.parse(wholeSecond)) * 1_000_000n + BigInt(fractional.padEnd(9, "0") || "0");
 }
 
 function strictInteger(value: string, name: string, minimum: number, maximum: number): number {

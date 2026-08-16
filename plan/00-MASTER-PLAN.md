@@ -166,9 +166,9 @@ Both look at the repository root. This must be fixed before anything else.
 
 - Promote `workshop/*` to the repository root.
 - Root `.gitignore` covers build output, dependencies, environment files,
-  benchmark artefacts, scratch directories, and `plan/internal/`.
+  benchmark artefacts and scratch directories.
 - Confirm nothing unintended has ever entered Git history.
-- Resolve the tracked PDF library (see `06-SUBMISSION-CHECKLIST.md` §2).
+- Resolve the tracked PDF library (see `06-RELEASE-CHECKLIST.md` §2).
 - `docker compose up` from a clean clone reaches healthy.
 
 **Exit gate:** clean clone → `docker compose up` → `GET /health` returns 200.
@@ -260,10 +260,10 @@ scripts that ship in the repository and can be re-run by anyone.
 **Exit gate:** `bench/results/final.md` complete; the shipped script reproduces
 the README's table.
 
-### Phase 6 — Documentation and submission · H+5:30 → H+6:00
+### Phase 6 — Documentation and release · H+5:30 → H+6:00
 
 - README with every section spec §40 requires.
-- Sanitisation gate and repository hygiene (`06-SUBMISSION-CHECKLIST.md`).
+- Pre-push review gate and repository hygiene (`06-RELEASE-CHECKLIST.md`).
 - Incremental, meaningful commits; push.
 - Video outline written (recording is the user's, not this plan's).
 
@@ -314,4 +314,4 @@ independent gate, and so does this plan.
 | `03-AGENTS.md` | Agent roles, file ownership, prompt templates, house rules |
 | `04-VERIFICATION-GATES.md` | Gates G0–G7 with exact commands and pass criteria |
 | `05-BENCHMARK-PROTOCOL.md` | Rig, scenarios, drain harness, experiment queue |
-| `06-SUBMISSION-CHECKLIST.md` | Definition of Done, hygiene, sanitisation gate, README outline |
+| `06-RELEASE-CHECKLIST.md` | Definition of Done, hygiene, pre-push review gate, README outline |

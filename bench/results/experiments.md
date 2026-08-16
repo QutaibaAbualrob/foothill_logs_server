@@ -4,7 +4,11 @@ One variable per experiment. Every run records its full result row —
 including the ones that lose — and a verdict of `keep`, `revert`, or
 `inconclusive`. The measurement for every read-path experiment is the drain
 harness (`scripts/drain.mjs` with `EXPECT_TOTAL` set), because the drain walk
-is what the load generator verifies and what the plan optimises.
+is what a freshness walk verifies and what the plan optimises.
+
+**Evidence note:** the exact E0 and E1+E2 console outputs were not retained in
+`bench/raw/`. This file is the experiment record; its figures cannot be
+independently reconstructed from the retained raw directory.
 
 Format:
 

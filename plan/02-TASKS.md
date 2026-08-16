@@ -28,7 +28,7 @@ are all at the repository root; `npm run build` succeeds from the root.
 
 ### T02 · Root ignore rules · INFRA · 5 min
 - `.gitignore` covers build output, dependencies, environment files, benchmark
-  artefacts, scratch directories, and `plan/internal/`.
+  artefacts and scratch directories.
 - `.dockerignore` excludes `node_modules`, `.git`, scratch directories, `bench`,
   `plan`, and the PDF library — a fat build context cache-busts every build.
 
@@ -36,11 +36,11 @@ are all at the repository root; `npm run build` succeeds from the root.
 path is ignored; `docker build` context size is under ~5 MB.
 
 ### T03 · Git history hygiene · INFRA · 8 min
-Resolve the tracked PDF library (~59 MB) per `06-SUBMISSION-CHECKLIST.md` §2,
+Resolve the tracked PDF library (~59 MB) per `06-RELEASE-CHECKLIST.md` §2,
 and confirm nothing unintended has ever been committed.
 
 **DoD:** `git log --all --name-only --pretty=format: | sort -u` contains only
-files that belong in the submission; `git count-objects -vH` shows a small pack.
+files that belong in the release; `git count-objects -vH` shows a small pack.
 
 ### T04 · Clean-clone boot · INFRA · 5 min
 Clone the repository to a scratch directory and run `docker compose up` with no
@@ -246,17 +246,17 @@ measures an empty range.
 
 ---
 
-## Phase 6 — Documentation and submission · H+5:30 → H+6:00
+## Phase 6 — Documentation and release · H+5:30 → H+6:00
 
 ### T24 · README · DOCS · 20 min
-Every section spec §40 requires; outline in `06-SUBMISSION-CHECKLIST.md` §4.
+Every section spec §40 requires; outline in `06-RELEASE-CHECKLIST.md` §4.
 Performance figures come from `final.md` only. Limitations are honest and do not
 contradict the headline results.
 
 **DoD:** every §40 heading present and filled with real content.
 
-### T25 · Sanitisation and submission gate · DOCS + INFRA · 15 min
-Run the checklist in `06-SUBMISSION-CHECKLIST.md` §1 and §3, commit
+### T25 · Pre-push review and release gate · DOCS + INFRA · 15 min
+Run the checklist in `06-RELEASE-CHECKLIST.md` §1 and §3, commit
 incrementally with meaningful messages, and push.
 
 **DoD:** gate G7 green; remote updated; a fresh clone of the pushed remote boots

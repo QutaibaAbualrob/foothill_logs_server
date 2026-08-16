@@ -87,6 +87,11 @@ await expectStatus(
   400,
 );
 await expectStatus(
+  "until earlier than since below millisecond precision",
+  "/logs?since=2026-08-02T00:00:00.000002Z&until=2026-08-02T00:00:00.000001Z",
+  400,
+);
+await expectStatus(
   "since without explicit zone",
   "/logs?since=2026-08-02T00:00:00",
   400,

@@ -1,7 +1,7 @@
-# Private working directory — never commit, never reference from tracked files
+# Scratch and working directory
 temp/
 
-# Private planning notes
+# Local planning notes
 plan/internal/
 
 # Build output and dependencies

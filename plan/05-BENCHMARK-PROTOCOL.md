@@ -44,6 +44,9 @@ docker run --rm --network <project>_default \
 Sampled in parallel for both containers: CPU, RSS, and — for PostgreSQL — WAL
 growth, table and index sizes, buffer hit ratio, temporary-file bytes, and
 `pg_stat_activity` wait events, written to `bench/raw/<run>-resources.csv`.
+Raw paths are create-only: every run uses a new name, and a collision is a hard
+failure rather than an append or overwrite. The resource summary records its
+actual start/end times and sample-cycle count.
 
 ### Scenarios
 
@@ -160,7 +163,7 @@ configuration:
 Each capture uses `EXPLAIN (ANALYZE, BUFFERS)`. For every capture, the README
 records: which index was chosen, whether a sort node appears, buffer hit versus
 read counts, and actual versus estimated rows. An index that no captured plan
-uses is removed before submission.
+uses is removed before the final push.
 
 ---
 

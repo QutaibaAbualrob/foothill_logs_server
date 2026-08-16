@@ -189,7 +189,9 @@ below; substitute your own run's dataset):
 - Drain: 86.8 pages/s, 86,761 rows/s over 3,001,180 rows; page p50/p95/p99
   9.4/16.1/75.7 ms; 0 duplicates, 0 ordering violations, exact `COUNT(*)`
   match.
-- Storage: 1,495 MB at 3 M rows, **514 MB of it indexes** — reported honestly.
+- Legacy storage record: 1,495 MB at 3 M rows, 514 MB of it indexes. Describe
+  it as unreconstructible from the retained raw evidence, not as a verified
+  measurement; new captures walk the complete partition tree.
 - Resources: app ~41–50% of 0.5 CPU, 41–55 MB RSS; PostgreSQL ~45–49% of
   1 CPU, ~327 MB RSS; buffer hit ratio 97.3%.
 

@@ -1,4 +1,4 @@
-# Submission Checklist
+# Release Checklist
 
 Run at H+5:30. Nothing here is optional, and several items are irreversible once
 pushed — work through it in order.
@@ -7,7 +7,7 @@ pushed — work through it in order.
 
 ## 1. Content gate — blocking
 
-The repository root is the submission. Everything tracked will be read by
+The repository root is the deliverable. Everything tracked will be read by
 someone else, so review what is actually in it rather than what you meant to put
 in it.
 
@@ -26,8 +26,7 @@ git status --ignored --porcelain | head -40
 cat .dockerignore
 ```
 
-Run the detailed pre-push review recorded in `plan/internal/SANITIZATION.md`
-before this gate is considered green.
+Run the detailed pre-push review before this gate is considered green.
 
 ### 1.2 Manual review
 
@@ -208,7 +207,7 @@ Tick honestly. An unticked box is information; a falsely ticked one is a defect.
 npm run typecheck && npm test && npm run build
 docker compose up -d --wait && npm run smoke && docker compose down -v
 
-# 2. sanitisation gate (§1) — must be clean
+# 2. pre-push review gate (§1) — must be clean
 
 # 3. commit incrementally, meaningful messages
 
@@ -217,7 +216,7 @@ git clone <remote> /tmp/final && cd /tmp/final
 docker compose up -d --wait && curl -sf localhost:8080/health
 ```
 
-The submission is the repository, not the working tree. Confirm what a clean
+The repository is the deliverable, not the working tree. Confirm what a clean
 clone of the pushed remote actually contains before calling it done.
 
 ---

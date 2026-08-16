@@ -1,7 +1,19 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
 const baseUrl = process.env.BASE_URL ?? "http://127.0.0.1:8080";
 const durationSeconds = Number(process.env.DURATION_SECONDS ?? 15);
 const concurrency = Number(process.env.CONCURRENCY ?? 64);
 const batchSize = Number(process.env.BATCH_SIZE ?? 50);
+const resultPath = process.env.RESULT_PATH;
+const absoluteResultPath = resultPath === undefined ? undefined : resolve(resultPath);
+if (absoluteResultPath !== undefined) {
+  mkdirSync(dirname(absoluteResultPath), { recursive: true });
+  if (existsSync(absoluteResultPath)) {
+    throw new Error(`RESULT_PATH already exists; choose a new path: ${absoluteResultPath}`);
+  }
+}
+const startedAtIso = new Date().toISOString();
 const endAt = Date.now() + durationSeconds * 1000;
 const ingestLatencies = [];
 const aggregateLatencies = [];
@@ -79,6 +91,12 @@ await Promise.all([
 ]);
 const elapsedSeconds = (performance.now() - startedAt) / 1000;
 const result = {
+  startedAt: startedAtIso,
+  endedAt: new Date().toISOString(),
+  baseUrl,
+  configuredDurationSeconds: durationSeconds,
+  concurrency,
+  batchSize,
   accepted,
   errors,
   elapsedSeconds: Number(elapsedSeconds.toFixed(3)),
@@ -93,5 +111,10 @@ const result = {
     p95: percentile(aggregateLatencies, 0.95),
   },
 };
-console.log(JSON.stringify(result, null, 2));
+const output = `${JSON.stringify(result, null, 2)}\n`;
+if (absoluteResultPath !== undefined) {
+  writeFileSync(absoluteResultPath, output, { flag: "wx" });
+  console.error(`result: ${absoluteResultPath}`);
+}
+process.stdout.write(output);
 if (errors > 0) process.exitCode = 1;

@@ -18,13 +18,17 @@
 
 `scripts/benchmark.mjs`, 30 s, 64 workers, batch 200:
 
+The exact console output was not retained under `bench/raw/`; these are
+historical figures carried from `plan/HANDOFF.md`, not independently
+reconstructible raw evidence.
+
 | Metric | Value |
 | --- | --- |
 | Accepted | 599,600 logs |
 | Throughput | 19,504 logs/s sustained |
 | Errors | 0 |
 | Ingest p50 / p95 / p99 | 610 / 901 / 1150 ms (whole batch of 200) |
-| Aggregate p95, concurrent | 112 ms (requirement: < 1 s) |
+| Aggregate p95, concurrent | 112 ms (requirement < 1 s met; internal double-digit-ms target missed) |
 
 A fresh ingestion run with resource capture is part of Phase 5.
 
@@ -37,12 +41,16 @@ A fresh ingestion run with resource capture is part of Phase 5.
 | Unique rows vs `COUNT(*)` | exact match (1,433,144) |
 | Duplicates / ordering violations | 0 / 0 |
 | Pages | 1,434 |
-| Rate | 85.0 pages/s, 84,974 rows/s |
+| Rate | 85.0 pages/s, 84,974 rows/s; ≥60 floor met, ≥100 target missed |
 | Page p50 / p95 / p99 | 9.5 / **20.3** / 73.8 ms |
 
 The walk crossed the million-row boundary with zero ordering violations —
 the exact scale at which the historical text-vs-bigint cursor defect
 manifested. G3's tied-timestamp and digit-boundary trap did not recur.
+
+Before the cursor-ordering fix, the preliminary drain recorded 18 ordering
+violations; after it, 0. That before/after number is preserved in
+`plan/HANDOFF.md` and has no retained raw capture.
 
 ## Page target
 
@@ -77,7 +85,9 @@ over half the table size. Re-measured in Phase 5 with the final dataset.
 
 ## Conclusion
 
-Correctness and reliability are in place at full scale. The single open
-number is page latency: 20.3 ms p95 against an 8 ms target, with PostgreSQL
-already answering in 1.7 ms. Phase 4 experiments E1 (row-to-JSON inside
-PostgreSQL) and E2 (direct response write) target exactly that gap.
+Correctness and reliability are in place at full scale. The 1.433 M-row walk
+completed inside 30 seconds, but the internal query targets were not all met:
+85.0 pages/s missed the ≥100 target, page p95 was 20.3 ms against ≤8 ms, and
+aggregate p95 was 112 ms rather than double-digit milliseconds. PostgreSQL
+already answered the page in 1.7 ms, so Phase 4 experiments E1 (row-to-JSON
+inside PostgreSQL) and E2 (direct response write) targeted that gap.

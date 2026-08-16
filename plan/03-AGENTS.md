@@ -18,7 +18,7 @@ These are not style preferences. A change that violates one of them is reverted.
 2. **Scratch and working directories stay out of the repository entirely** — not
    referenced, quoted, summarised, or cited in source, comments, tests,
    documentation, or commit messages. They are ignored by Git and by Docker.
-   The pre-push review in `plan/internal/SANITIZATION.md` enforces this.
+   A pre-push review enforces this.
 3. Identifiers, defaults, and comments describe an engineering purpose. If a
    value exists because a particular access pattern is hot, say *that* — name
    the pattern, make it configurable, and document the trade-off. A constant
@@ -113,7 +113,7 @@ partition path; two benchmarks running at once on one machine.
 ### DOCS
 **Mission:** the README earns its marks and states nothing the repository cannot
 prove.
-T24, T26, and the sanitisation gate with INFRA.
+T24, T26, and the pre-push review gate with INFRA.
 **Watch for:** a Limitations section that contradicts the headline results; a
 documented default that has since changed in code; a durability claim the
 shipped configuration does not provide.

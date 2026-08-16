@@ -182,14 +182,14 @@ README's Limitations section, with the measured number.
 | Backdated timestamps | present in the generator |
 | `EXPLAIN (ANALYZE, BUFFERS)` | captured for every index we claim is used |
 | Every shipped index | justified by a captured plan that actually uses it |
-| Unused index | removed before submission |
+| Unused index | removed before the final push |
 | One variable per experiment | the experiment log shows it |
 
 ---
 
-## G7 — Submission · end of Phase 6
+## G7 — Release · end of Phase 6
 
-Full checklist in `06-SUBMISSION-CHECKLIST.md`. The blocking subset:
+Full checklist in `06-RELEASE-CHECKLIST.md`. The blocking subset:
 
 ```bash
 # 1. Only intended files are tracked — review the whole list, it is short
