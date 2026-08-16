@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16.4-bookworm
+    environment:
+      POSTGRES_DB: logs
+      POSTGRES_USER: logger
+      POSTGRES_PASSWORD: logger
+    command:
+      - postgres
+      - -c
+      - max_connections=40
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - wal_compression=on
+      - -c
+      - jit=off
+      - -c
+      - random_page_cost=1.1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logger -d logs"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    cpus: 1.0
+    mem_limit: 1g
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgresql://logger:logger@postgres:5432/logs
+      SYNC_COMMIT: "off"
+      # Signs the opaque pagination cursor. Fixed here so cursors stay valid
+      # across a container restart; unset, the process generates a random secret
+      # at startup and cursors minted before a restart are rejected.
+      CURSOR_SECRET: local-development-cursor-key
+      # Attribute keys that get a dedicated partial ordered index. Empty ships
+      # none; see README "Indexes" for the measured write cost.
+      HOT_ATTRIBUTE_KEYS: trace_id
+      RETENTION_DAYS: "30"
+      WRITE_POOL_SIZE: "2"
+      QUERY_POOL_SIZE: "8"
+      BATCH_TARGET_ROWS: "2000"
+      BATCH_MAX_ROWS: "5000"
+      BATCH_DELAY_MS: "5"
+      QUEUE_MAX_ROWS: "50000"
+      NODE_OPTIONS: --max-old-space-size=192
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    cpus: 0.5
+    mem_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

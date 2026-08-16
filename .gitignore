@@ -1,0 +1,15 @@
+# Private working directory — never commit, never reference from tracked files
+temp/
+
+# Private planning notes
+plan/internal/
+
+# Build output and dependencies
+node_modules/
+dist/
+coverage/
+
+# Local environment and benchmark artifacts
+.env
+*.log
+bench/raw/

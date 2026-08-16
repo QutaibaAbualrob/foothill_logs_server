@@ -1,0 +1,8 @@
+# Normalise to LF in the repository. The service is built and tested in Linux
+# containers and in CI, so a CRLF checkout on Windows must not change what is
+# committed — a shell script or Dockerfile with CRLF line endings fails to run
+# inside the image.
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary

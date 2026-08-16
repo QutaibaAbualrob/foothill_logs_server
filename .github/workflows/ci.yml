@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4-bookworm
+        env:
+          POSTGRES_DB: logs_test
+          POSTGRES_USER: logger
+          POSTGRES_PASSWORD: logger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U logger -d logs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://logger:logger@localhost:5432/logs_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: docker build -t optimized-logger:test .
+      - run: docker compose up -d --wait
+      - run: npm run smoke
+      - if: always()
+        run: docker compose down -v

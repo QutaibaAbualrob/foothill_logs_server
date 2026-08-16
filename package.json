@@ -1,0 +1,34 @@
+{
+  "name": "optimized-log-ingestion-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "test:integration": "tsx --test test/integration/**/*.test.ts",
+    "smoke": "node scripts/contract-smoke.mjs",
+    "bench": "node scripts/benchmark.mjs",
+    "bench:drain": "node scripts/drain.mjs",
+    "migrate": "tsx src/db/migrate-cli.ts"
+  },
+  "dependencies": {
+    "express": "5.1.0",
+    "pg": "8.16.3",
+    "pg-copy-streams": "7.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.3.0",
+    "@types/pg": "8.15.5",
+    "@types/pg-copy-streams": "1.2.5",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2"
+  }
+}

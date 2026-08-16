@@ -3,6 +3,12 @@
 > Status: concept and research only. No application, Docker, database, or benchmark
 > implementation exists yet. This document is a working record for the final
 > TypeScript project; it is not the submission README.
+>
+> Fact-check revision (2026-08-15): this document now distinguishes the supplied
+> evaluator contract from additional production policies proposed by the R&D.
+> In particular, crash-durable acknowledgement and `503 + Retry-After`
+> backpressure are recommended guarantees, not explicit statements in the
+> supplied project brief.
 
 ## 1. Project brief, distilled
 
@@ -55,7 +61,9 @@ made before a benchmark is built.
   and benchmarked.
 - Retention is configurable through `RETENTION_DAYS`, with a **30-day default**.
 - This project will favour direct, parameterized PostgreSQL SQL over an ORM on the
-  write path. The final HTTP framework is intentionally still open (see section 5).
+  write path. The supplied brief names **Express**, so Express is the baseline HTTP
+  framework. Alternatives in section 5 are research comparisons and should be used
+  only if a deviation from the brief is explicitly accepted and justified.
 
 ## 3. Recommended direction to validate
 
@@ -71,18 +79,25 @@ HTTP batch
 ```
 
 The queue should coalesce valid entries from multiple requests into modest `COPY`
-transactions. A request receives `200` only after its valid entries commit; invalid
-entries remain reported by their original request index. This removes per-row SQL
-round trips while preserving the API's partial-batch behaviour.
+transactions. As an **additional production guarantee selected by this R&D**, a
+request receives `200` only after its valid entries commit; invalid entries remain
+reported by their original request index. This removes per-row SQL round trips
+while preserving the API's partial-batch behaviour. The supplied brief requires
+sustained ingestion without dropped accepted requests, but it does not explicitly
+define crash-durable HTTP acknowledgement semantics.
 
-The queue must be bounded by both count and estimated bytes. When full, it should
-apply explicit backpressure (`503` and `Retry-After`) before claiming any extra
-entries were accepted. This is preferable to growing beyond the application's
-memory limit or replying `200` for uncommitted data.
+The queue must be bounded by both count and estimated bytes for resource safety.
+The recommended overload policy is explicit backpressure (`503` and
+`Retry-After`) before claiming any extra entries were accepted. This is preferable
+to growing beyond the application's memory limit or replying `200` for uncommitted
+data, but the exact `503`/header behavior is an added policy rather than a status
+contract stated by the supplied brief.
 
-Use normal, WAL-backed tables and synchronous commits. Do **not** use an unlogged
-staging table or asynchronous commit for acknowledged logs: either can lose data
-after a crash even though a request received success.
+To provide the added crash-durable acknowledgement guarantee, use normal,
+WAL-backed tables and synchronous commits. Do **not** describe an unlogged table
+or asynchronous commit as crash-durable: either can lose data after a crash even
+though a request received success. If benchmark-only durability trade-offs are
+ever evaluated, label and test them separately from the production policy.
 
 ### Schema and query direction
 
@@ -128,7 +143,7 @@ other high-cardinality label/value.
 | Read/write contention | Aggregate scans and GIN maintenance share one PostgreSQL CPU with ingestion. | Keep aggregate SQL set-based, use partition pruning and bounded DB pools, then measure p95 under concurrent load. |
 | Retention maintenance | Row-by-row deletion produces locks, vacuum work, and table bloat. | Drop whole daily partitions after the retention boundary. |
 | Out-of-window timestamps | Valid timestamps can be very old; allowing arbitrary historical days to create partitions can be abused. | Define and document a safe historical handling policy before implementation; do not silently reject otherwise valid core entries. |
-| Durability shortcuts | Turning off `synchronous_commit`, using unlogged tables, or acknowledging queued data can improve a benchmark while violating reliability. | Return success only after a normal PostgreSQL transaction commits. |
+| Durability shortcuts | Turning off `synchronous_commit`, using unlogged tables, or acknowledging queued data can improve a benchmark while weakening crash durability. | If adopting the R&D's added durable-ack policy, return success only after a normal synchronous PostgreSQL transaction commits; do not attribute that exact guarantee to the supplied brief. |
 
 Candidate PostgreSQL settings to benchmark, not assume: a modest `shared_buffers`
 budget (for example 256 MB), low connection count, appropriate WAL/checkpoint
@@ -139,7 +154,8 @@ enabled for accepted records.
 
 | Option | Why to consider it | Trade-off |
 | --- | --- | --- |
-| **Fastify + `pg` + `pg-copy-streams`** | Mature Node server, strong TypeScript support, low overhead, and direct control of `COPY` and query plans. | Adds a framework and requires custom per-entry validation rather than relying only on route schemas. |
+| **Express + `pg` + `pg-copy-streams`** | Matches the framework named by the supplied brief while retaining direct control of `COPY` and query plans. | Express adds less built-in schema validation than some alternatives, so per-entry validation and error mapping remain application responsibilities. |
+| **Fastify + `pg` + `pg-copy-streams`** | Mature Node server, strong TypeScript support, low overhead, and direct control of `COPY` and query plans. | Deviates from the framework named by the brief unless that deviation is explicitly accepted; also requires careful per-entry validation beyond route schemas. |
 | **Native `node:http` + `pg`** | Maximum control over streaming, request limits, HTTP semantics, and the learning value of building an HTTP server. | More routing, parsing, error-handling, and testing code to own. |
 | **Hono + `pg`** | Small, TypeScript-first API with a supported Node adapter. | A less conventional choice for a database-heavy Node service; assess its body/parser behaviour under the actual load. |
 | **Kysely for reads + raw `pg` for `COPY`** | Type-safe query construction can improve maintainability while retaining raw SQL for the write hot path. | Adds another abstraction to learn; generated SQL still needs plan review. |
@@ -296,7 +312,9 @@ Useful conclusions:
   be minimized simultaneously. The resource limit makes an explicit index budget
   necessary.
 - WAL and recovery mechanics explain why an HTTP success response must wait for
-  the transaction commit; queued or memory-only acceptance is not durability.
+  a synchronous transaction commit **if the service promises crash-durable
+  acknowledgement**; queued or memory-only acceptance does not provide that
+  additional guarantee.
 - Bulk construction of a fresh index differs from continuously maintaining indexes
   on a live table. Offline bulk-load advantages cannot be assumed during grading.
 
@@ -331,8 +349,8 @@ Useful conclusions:
 | --- | --- | --- |
 | Exact `GET /health`, `POST /logs`, `GET /logs`, and `GET /logs/aggregate` contract | No material coverage | Implement and contract-test the supplied paths, validation rules, statuses, and response shapes in TypeScript. |
 | Partial validation of ingestion batches | General transaction/error principles only | Preserve original array indexes, commit valid entries together, and report individual rejection reasons. |
-| At least 15,000 logs/second | `COPY`, batching, WAL/checkpoint, and write-amplification principles | Prove throughput with the real API, durable commits, production indexes, and constrained containers. |
-| No acknowledged data loss | WAL, ACID, transaction commit, and recovery mechanics | Keep `fsync`, full-page writes, WAL, and synchronous commit enabled; send success only after commit. |
+| At least 15,000 logs/second | `COPY`, batching, WAL/checkpoint, and write-amplification principles | Prove throughput with the real API, the chosen documented commit configuration, production indexes, and constrained containers; test synchronous durable mode if claiming that added guarantee. |
+| Sustained ingestion without dropped accepted requests or crashes | WAL, ACID, transaction commit, and recovery mechanics | Meet the supplied sustained-load behavior. Separately decide whether to adopt the stronger crash-durable-ack policy; if adopted, keep normal WAL and synchronous commit enabled and send success only after commit. |
 | Aggregation below one second at p95 | Index/selectivity, statistics, plans, percentiles, and materialized aggregates | Benchmark the exact filters, time buckets, grouping, and concurrent ingestion workload. |
 | Searchable within 20 seconds | Transaction visibility and stream-timeliness concepts | Directly commit micro-batches well inside the limit and measure queue plus commit latency. |
 | Freely combinable filters | Index combination and query-planner principles | Build parameterized dynamic SQL and test every supported filter combination. |
@@ -349,7 +367,8 @@ Useful conclusions:
 1. Use a PostgreSQL identity `BIGINT` as the public log ID and encode it as a JSON
    string. Keep `(timestamp DESC, id DESC)` as the deterministic query/cursor order.
 2. Preserve bounded micro-batching into normal WAL-backed tables through `COPY`.
-   Resolve each waiting HTTP request only after the transaction commits.
+   Under the added crash-durable-ack policy, resolve each waiting HTTP request
+   only after the synchronous transaction commits.
 3. Establish an index-cost benchmark sequence: ordering index only; add
    service/time; add JSONB GIN; add trigram GIN; finally test both GIN indexes
    together. Record throughput, read latency, WAL bytes, and index size at every
@@ -377,8 +396,9 @@ and load tests.
   valid rows from several requests into a bounded batch, `COPY` it inside one
   transaction, and resolve every affected request only after that transaction
   commits. A hard pending-row **and byte** limit is still needed for a database
-  outage; return `503` with `Retry-After` rather than retaining unbounded data
-  in the 256 MB application container.
+  outage. The recommended added overload policy is `503` with `Retry-After`
+  rather than retaining unbounded data in the 256 MB application container;
+  the supplied brief does not prescribe that exact status/header pair.
 - If an aggregate rollup is introduced, write its counter changes in the same
   transaction as the raw rows so it cannot permanently diverge after a failed
   batch or retry. Give every rollup table its own retention policy. A raw-table
@@ -393,10 +413,10 @@ and load tests.
   permitted historical window, reject records outside a documented window, or
   implement a bounded explicit historical-partition policy. The chosen path
   must ensure every accepted record has the same retention guarantee.
-- Keep acknowledgement durability end-to-end: normal WAL-backed tables,
-  `fsync` enabled, and `synchronous_commit=on` for accepted batches. A database
-  `COMMIT` response with asynchronous commit can still lose recently
-  acknowledged data in a crash.
+- If adopting the added crash-durable-ack policy, keep durability end-to-end:
+  normal WAL-backed tables, `fsync` enabled, and `synchronous_commit=on` for
+  accepted batches. A database `COMMIT` response with asynchronous commit can
+  still lose recently acknowledged data in a crash.
 - Separate the scarce database capacity by role: a small write pool for the
   `COPY` pipeline, a bounded read pool with a server-side statement timeout,
   and a small maintenance/health pool. This protects ingestion and liveness
@@ -412,9 +432,10 @@ and load tests.
   sizes; validate timestamps as the documented ISO-8601 form; parse limits and
   cursor IDs strictly rather than accepting numeric prefixes, decimal IDs, or
   permissive date strings.
-- Keep aggregation counters as `BIGINT` through SQL and JSON conversion. A
-  32-bit SQL count can overflow long before an operational log service reaches
-  its practical retention horizon.
+- Keeping aggregation counters as `BIGINT` through SQL is sensible production
+  hardening, not a necessity at the brief's roughly one-million-row test scale.
+  If counts can exceed JavaScript's safe-integer range, define an explicit JSON
+  string/number representation so the API does not silently lose precision.
 - Preserve the useful parts of manual `COPY` preparation: validate before
   enqueueing, escape the selected `COPY` format correctly, avoid unnecessary
   object copies on the ingestion hot path, and keep SQL construction separated
@@ -424,7 +445,8 @@ and load tests.
 
 ## 8. Before implementation begins
 
-1. Choose the HTTP framework after a small, comparable prototype or focused study.
+1. Use Express as the supplied-brief baseline. Prototype another HTTP framework
+   only to support an explicitly accepted and documented deviation.
 2. Obtain or recreate the evaluator's batch sizes, timestamp distribution, query
    mix, and payload sizes; they control every meaningful performance decision.
 3. Decide and document the policy for legitimate logs older than retention.
@@ -454,13 +476,16 @@ this project's own tests under the stated Docker limits.
 
 ### 9.1 Durability
 
-- Keep `fsync`, WAL, and `synchronous_commit=on` for acknowledged batches.
+- The supplied brief does not explicitly define crash-durable acknowledgement.
+  The following rules implement the **stronger production contract chosen by
+  this R&D**; label them as added guarantees in the final README and tests.
+- Keep `fsync`, WAL, and `synchronous_commit=on` for acknowledged batches when
+  claiming crash-durable acknowledgement.
   Any configuration that weakens commit durability — `synchronous_commit=off`,
-  unlogged tables, asynchronous commit — invalidates the "200 only after a
-  durable commit" contract. A throughput gain that contradicts the documented
-  reliability contract fails the reliability requirement; if such a setting is
-  ever evaluated experimentally, it must be reverted before submission and the
-  documentation updated.
+  unlogged tables, asynchronous commit — invalidates that added "200 only after
+  a durable commit" contract. A throughput gain under such a setting must not be
+  presented as durable. If evaluated experimentally, isolate it from the chosen
+  production configuration and document the trade-off honestly.
 - Every configuration comment must describe the design that actually exists.
   A setting justified by an architecture that has since been replaced (for
   example an ack-before-durable buffer that no longer exists) is a trap for
@@ -511,8 +536,10 @@ this project's own tests under the stated Docker limits.
   cast turns a `400` into a `500`.
 - Parse `limit` strictly (no numeric prefixes), matching the documented input
   contract.
-- Keep aggregation counters `BIGINT` end to end through SQL and JSON. A
-  32-bit cast is a latent overflow, not a theoretical one.
+- Prefer aggregation counters as `BIGINT` for production headroom. A 32-bit cast
+  is sufficient for the supplied roughly one-million-row dataset but becomes an
+  overflow risk at larger retention volumes. Define how BIGINT values are encoded
+  in JSON when they may exceed JavaScript's safe-integer range.
 
 ### 9.5 Benchmarks and evidence
 
@@ -561,18 +588,21 @@ this project's own tests under the stated Docker limits.
 
 ## 10. Candidate best practices for implementation
 
-These patterns currently offer the strongest fit for the requirements and
-resource envelope. The core correctness rules should be preserved; optional
-performance structures must earn their place through reproducible benchmarks.
+These patterns currently offer a strong candidate design for the requirements
+and resource envelope. Items involving crash-durable acknowledgement or a
+specific overload status are added production policies, not evaluator wording.
+Optional performance structures must earn their place through reproducible
+benchmarks.
 
 1. **Group-commit acknowledgement.** Resolve an ingest request only after the
    transaction carrying its rows commits. "Accepted" and "persisted" are the
    same by construction, and memory is bounded by in-flight request
    concurrency rather than a guessed buffer constant.
 2. **Bounded batching with explicit backpressure.** Hard row *and* byte
-   ceilings on queued work; when full, respond `503` + `Retry-After` — never a
-   false `200` for uncommitted rows and never a `400` for server-side
-   saturation.
+   ceilings on queued work. Under the recommended overload policy, respond
+   `503` + `Retry-After` when full—never a false `200` for uncommitted rows and
+   never a `400` for server-side saturation. The exact status/header pair is an
+   added contract to document and test.
 3. **Transactional rollup, if required.** If pre-aggregated counters are added,
    update them in the same transaction as the raw `COPY` so committed raw data
    and counts remain consistent. Sorting upsert rows by key gives concurrent
@@ -606,9 +636,10 @@ performance structures must earn their place through reproducible benchmarks.
     flags, or PostgreSQL parallelism from CPU-count assumptions alone; profile
     the actual constrained container and change one setting at a time.
 11. **Error mapping that distinguishes client faults from server
-    conditions.** `400` only for genuinely invalid input; statement timeouts,
-    pool exhaustion, and backpressure are `503` + `Retry-After` so saturation
-    is never misreported as client error volume.
+     conditions.** `400` only for genuinely invalid input; statement timeouts,
+     pool exhaustion, and backpressure use `503` + `Retry-After` under the
+     recommended overload policy so saturation is never misreported as client
+     error volume.
 12. **CI for the zero-config contract.** Build, typecheck, and run unit tests,
     followed by a compose-up contract smoke test covering every required
     endpoint with mixed valid/invalid input and reliable teardown on failure.
@@ -633,8 +664,9 @@ performance structures must earn their place through reproducible benchmarks.
   pending rows, committed batches, retries, flush latency — with no
   high-cardinality labels or values.
 - Document the database-stall path in the runbook: what the client sees
-  (`503` + `Retry-After`), what the operator sees (bounded memory, retry
-  loop), and how the service recovers when PostgreSQL returns.
+  under the chosen overload policy (`503` + `Retry-After`), what the operator
+  sees (bounded memory, retry loop), and how the service recovers when
+  PostgreSQL returns.
 - When the rollup table gains its retention cleanup, batch the deletes per
   day rather than issuing one giant `DELETE` — the same reasoning that drives
   partition drops.
@@ -725,11 +757,13 @@ them.
 
 - Throughput cannot compensate for incorrect pagination or query results. Treat
   full-dataset read correctness as an independent acceptance gate.
-- **Never build a pagination cursor from a JavaScript `Date`.** The column
-  stores microseconds and `Date` truncates to milliseconds; every row in the
-  truncated tail is silently skipped, pages come back short, and the walk
-  ends with `next_cursor: null` as though the data were exhausted. Render
-  the cursor timestamp at full precision from the database itself
+- Avoid building this pagination cursor from a JavaScript `Date` when PostgreSQL
+  values may contain sub-millisecond precision. `Date` preserves milliseconds,
+  so converting a higher-precision database timestamp can change the key and
+  may skip rows that share the truncated millisecond. This is a conditional
+  precision bug, not an inevitable failure for every `Date` value. For this
+  design, preserve the database's exact cursor value—for example, render the
+  timestamp at full precision in PostgreSQL
   (`to_char(timestamp AT TIME ZONE 'UTC', '...US...')`).
 - Verify pagination at full dataset scale before submission: ingest more
   than a million rows and walk the cursor to the end, asserting

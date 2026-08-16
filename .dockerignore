@@ -1,0 +1,20 @@
+# The image needs package manifests, tsconfig and src only. Everything else is
+# excluded so the build context stays small — a fat context is re-hashed on
+# every build and invalidates the layer cache before Docker reads a line of it.
+.git
+.github
+.env
+node_modules
+dist
+coverage
+*.log
+
+# Test, benchmark and research material: never part of the runtime image
+test
+load
+bench
+scripts
+plan
+search_rnd
+temp
+performance-results
