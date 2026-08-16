@@ -64,42 +64,57 @@ export class RetentionWorker {
   private async runPass(): Promise<void> {
     const client = this.client;
     if (client === undefined) return;
-    const cutoff = new Date(Date.now() - this.config.retentionDays * DAY_MS);
-    await ensureMonthlyPartitions(client, this.config.retentionDays);
-    await dropExpiredPartitions(client, cutoff);
-
-    let deleted = 0;
-    for (let batch = 0; batch < MAX_BATCHES_PER_PASS && !this.stopping; batch += 1) {
-      const result = await client.query(
-        `WITH doomed AS (
-           SELECT timestamp, id
-           FROM logs
-           WHERE timestamp < $1::timestamptz
-           ORDER BY timestamp, id
-           LIMIT $2
-           FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM logs target
-         USING doomed
-         WHERE target.timestamp = doomed.timestamp AND target.id = doomed.id`,
-        [cutoff.toISOString(), this.config.retentionBatchRows],
-      );
-      const count = result.rowCount ?? 0;
-      deleted += count;
-      if (count < this.config.retentionBatchRows) break;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-
-    const oldRows = await client.query<{ exists: boolean }>(
-      "SELECT EXISTS (SELECT 1 FROM logs WHERE timestamp < $1::timestamptz LIMIT 1) AS exists",
-      [cutoff.toISOString()],
-    );
-    if (oldRows.rows[0]?.exists === false) await rebuildRollupBoundary(client, cutoff);
-    console.log(JSON.stringify({ event: "retention_pass", cutoff: cutoff.toISOString(), deleted }));
+    await runRetentionPass(client, this.config, () => this.stopping);
   }
 }
 
-async function dropExpiredPartitions(client: PoolClient, cutoff: Date): Promise<void> {
+/**
+ * Runs one complete retention pass against the given client: ensures monthly
+ * partitions exist, drops partitions whose range has fully expired, deletes
+ * expired rows in bounded batches, and rebuilds the rollup boundary minute
+ * once no expired rows remain. Exported so tests can drive a single pass
+ * directly without waiting for the worker timer.
+ */
+export async function runRetentionPass(
+  client: Pick<PoolClient, "query">,
+  config: AppConfig,
+  isStopping: () => boolean = () => false,
+): Promise<void> {
+  const cutoff = new Date(Date.now() - config.retentionDays * DAY_MS);
+  await ensureMonthlyPartitions(client, config.retentionDays);
+  await dropExpiredPartitions(client, cutoff);
+
+  let deleted = 0;
+  for (let batch = 0; batch < MAX_BATCHES_PER_PASS && !isStopping(); batch += 1) {
+    const result = await client.query(
+      `WITH doomed AS (
+         SELECT timestamp, id
+         FROM logs
+         WHERE timestamp < $1::timestamptz
+         ORDER BY timestamp, id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       DELETE FROM logs target
+       USING doomed
+       WHERE target.timestamp = doomed.timestamp AND target.id = doomed.id`,
+      [cutoff.toISOString(), config.retentionBatchRows],
+    );
+    const count = result.rowCount ?? 0;
+    deleted += count;
+    if (count < config.retentionBatchRows) break;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  const oldRows = await client.query<{ exists: boolean }>(
+    "SELECT EXISTS (SELECT 1 FROM logs WHERE timestamp < $1::timestamptz LIMIT 1) AS exists",
+    [cutoff.toISOString()],
+  );
+  if (oldRows.rows[0]?.exists === false) await rebuildRollupBoundary(client, cutoff);
+  console.log(JSON.stringify({ event: "retention_pass", cutoff: cutoff.toISOString(), deleted }));
+}
+
+async function dropExpiredPartitions(client: Pick<PoolClient, "query">, cutoff: Date): Promise<void> {
   const result = await client.query<{ name: string }>(`
     SELECT child.relname AS name
     FROM pg_inherits
@@ -117,7 +132,7 @@ async function dropExpiredPartitions(client: PoolClient, cutoff: Date): Promise<
   }
 }
 
-async function rebuildRollupBoundary(client: PoolClient, cutoff: Date): Promise<void> {
+async function rebuildRollupBoundary(client: Pick<PoolClient, "query">, cutoff: Date): Promise<void> {
   await client.query("BEGIN");
   try {
     await client.query(
