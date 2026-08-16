@@ -4,7 +4,7 @@ import { HttpError } from "../../src/errors.js";
 import { buildPredicates } from "../../src/query/builder.js";
 import { CursorCodec, filterHash } from "../../src/query/cursor.js";
 import { parseAggregateQuery, parseLogQuery } from "../../src/query/parser.js";
-import { safeCount } from "../../src/query/repository.js";
+import { computeEdgeSlices, safeCount } from "../../src/query/repository.js";
 import type { QueryFilters } from "../../src/query/types.js";
 
 const codec = new CursorCodec("test-secret");
@@ -110,4 +110,56 @@ test("q is matched literally so wildcards cannot be injected through it", () => 
 test("aggregate counts remain JSON-safe", () => {
   assert.equal(safeCount("1000000"), 1_000_000);
   assert.throws(() => safeCount("9007199254740992"));
+});
+
+test("edge slices: an aligned range has no edges and a full-minute interior", () => {
+  assert.deepEqual(computeEdgeSlices("2026-08-16T12:00:00Z", "2026-08-16T12:05:00Z"), {
+    alignedSince: "2026-08-16T12:00:00.000Z",
+    alignedUntil: "2026-08-16T12:05:00.000Z",
+    hasLeft: false,
+    hasRight: false,
+  });
+});
+
+test("edge slices: unaligned bounds produce an interior plus left and right edges", () => {
+  assert.deepEqual(computeEdgeSlices("2026-08-16T12:00:30.123Z", "2026-08-16T12:05:30.456Z"), {
+    alignedSince: "2026-08-16T12:01:00.000Z",
+    alignedUntil: "2026-08-16T12:05:00.000Z",
+    hasLeft: true,
+    hasRight: true,
+  });
+});
+
+test("edge slices: a range inside one minute has an empty interior", () => {
+  const slices = computeEdgeSlices("2026-08-16T12:00:30Z", "2026-08-16T12:00:50Z");
+  assert.equal(slices.alignedSince >= slices.alignedUntil, true);
+});
+
+test("edge slices: only the trailing edge exists when since is aligned", () => {
+  assert.deepEqual(computeEdgeSlices("2026-08-16T12:00:00Z", "2026-08-16T12:05:30Z"), {
+    alignedSince: "2026-08-16T12:00:00.000Z",
+    alignedUntil: "2026-08-16T12:05:00.000Z",
+    hasLeft: false,
+    hasRight: true,
+  });
+});
+
+test("edge slices: sub-millisecond digits past a minute boundary are not truncated away", () => {
+  // 12:00:00.000001 is strictly inside minute 12:00, but Date.parse truncates
+  // it to 12:00:00.000 — treating it as aligned would hand the rollup a whole
+  // edge minute it does not contain. The bump must force a left edge.
+  assert.deepEqual(computeEdgeSlices("2026-08-16T12:00:00.000001Z", "2026-08-16T12:05:00Z"), {
+    alignedSince: "2026-08-16T12:01:00.000Z",
+    alignedUntil: "2026-08-16T12:05:00.000Z",
+    hasLeft: true,
+    hasRight: false,
+  });
+  // Symmetrically for until: 12:05:00.000001 excludes the instant 12:05:00.000000,
+  // so the interior must stop at 12:05:00 and a right edge covers the remainder.
+  assert.deepEqual(computeEdgeSlices("2026-08-16T12:00:00Z", "2026-08-16T12:05:00.000001Z"), {
+    alignedSince: "2026-08-16T12:00:00.000Z",
+    alignedUntil: "2026-08-16T12:05:00.000Z",
+    hasLeft: false,
+    hasRight: true,
+  });
 });
