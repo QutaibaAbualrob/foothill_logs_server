@@ -1,0 +1,28 @@
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.99..1025.32 rows=1001 width=191) (actual time=0.122..0.123 rows=0 loops=1)
+   Buffers: shared hit=8 read=3
+   ->  Merge Append  (cost=0.99..7337.13 rows=7169 width=191) (actual time=0.121..0.122 rows=0 loops=1)
+         Sort Key: logs."timestamp" DESC, logs.id DESC
+         Buffers: shared hit=8 read=3
+         ->  Index Scan using logs_2026_07_expr_timestamp_id_idx on logs_2026_07 logs_1  (cost=0.12..2.35 rows=1 width=191) (actual time=0.002..0.003 rows=0 loops=1)
+               Index Cond: ((attributes ->> 'trace_id'::text) = '1-100-3'::text)
+               Buffers: shared hit=2
+         ->  Index Scan using logs_2026_08_expr_timestamp_id_idx on logs_2026_08 logs_2  (cost=0.43..7208.59 rows=7165 width=191) (actual time=0.100..0.100 rows=0 loops=1)
+               Index Cond: ((attributes ->> 'trace_id'::text) = '1-100-3'::text)
+               Buffers: shared read=3
+         ->  Index Scan using logs_2026_09_expr_timestamp_id_idx on logs_2026_09 logs_3  (cost=0.12..2.35 rows=1 width=191) (actual time=0.008..0.008 rows=0 loops=1)
+               Index Cond: ((attributes ->> 'trace_id'::text) = '1-100-3'::text)
+               Buffers: shared hit=2
+         ->  Index Scan using logs_2026_10_expr_timestamp_id_idx on logs_2026_10 logs_4  (cost=0.12..2.35 rows=1 width=191) (actual time=0.005..0.005 rows=0 loops=1)
+               Index Cond: ((attributes ->> 'trace_id'::text) = '1-100-3'::text)
+               Buffers: shared hit=2
+         ->  Index Scan using logs_default_expr_timestamp_id_idx on logs_default logs_5  (cost=0.12..2.35 rows=1 width=191) (actual time=0.004..0.004 rows=0 loops=1)
+               Index Cond: ((attributes ->> 'trace_id'::text) = '1-100-3'::text)
+               Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=645
+ Planning Time: 2.863 ms
+ Execution Time: 0.224 ms
+(24 rows)
+

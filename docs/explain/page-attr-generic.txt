@@ -1,0 +1,29 @@
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=1.00..9066.92 rows=1001 width=191) (actual time=0.150..1.481 rows=1001 loops=1)
+   Buffers: shared hit=35
+   ->  Merge Append  (cost=1.00..64938.73 rows=7170 width=191) (actual time=0.148..1.417 rows=1001 loops=1)
+         Sort Key: logs."timestamp" DESC, logs.id DESC
+         Buffers: shared hit=35
+         ->  Index Scan Backward using logs_2026_07_pkey on logs_2026_07 logs_1  (cost=0.12..2.35 rows=1 width=191) (actual time=0.002..0.002 rows=0 loops=1)
+               Filter: ((attributes ->> 'region'::text) = 'eu-west'::text)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using logs_2026_08_pkey on logs_2026_08 logs_2  (cost=0.43..64808.12 rows=7166 width=191) (actual time=0.123..1.314 rows=1001 loops=1)
+               Filter: ((attributes ->> 'region'::text) = 'eu-west'::text)
+               Rows Removed by Filter: 40
+               Buffers: shared hit=31
+         ->  Index Scan Backward using logs_2026_09_pkey on logs_2026_09 logs_3  (cost=0.12..2.35 rows=1 width=191) (actual time=0.006..0.006 rows=0 loops=1)
+               Filter: ((attributes ->> 'region'::text) = 'eu-west'::text)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using logs_2026_10_pkey on logs_2026_10 logs_4  (cost=0.12..2.35 rows=1 width=191) (actual time=0.004..0.004 rows=0 loops=1)
+               Filter: ((attributes ->> 'region'::text) = 'eu-west'::text)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using logs_default_pkey on logs_default logs_5  (cost=0.14..4.39 rows=1 width=191) (actual time=0.012..0.012 rows=0 loops=1)
+               Filter: ((attributes ->> 'region'::text) = 'eu-west'::text)
+               Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=642
+ Planning Time: 1.597 ms
+ Execution Time: 1.636 ms
+(25 rows)
+

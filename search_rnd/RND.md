@@ -224,7 +224,7 @@ The four local books answer different parts of the design problem. The two
 PostgreSQL books are valuable sources of principles but describe PostgreSQL 9.3-
 to-9.6-era behaviour. The other two books are primarily conceptual. None of the
 books defines the required HTTP contract or proves that a design will meet the
-grader's resource and performance limits.
+stated container resource and performance limits.
 
 Current PostgreSQL documentation is the final authority for SQL syntax,
 declarative partitioning, JSONB/GIN behaviour, configuration parameters, defaults,
@@ -576,7 +576,7 @@ this project's own tests under the stated Docker limits.
   working tree.
 - Every documented claim that names a current default or architecture must be
   updated when the code changes. A stale limitations section that contradicts
-  the headline results reads as a contradiction to a grader, not as history.
+  the headline results reads as a contradiction, not as history.
 
 ### 9.8 Prototype-pollution protection
 

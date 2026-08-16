@@ -1,0 +1,19 @@
+                                                                                                           QUERY PLAN                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=7.64..7.67 rows=14 width=74) (actual time=0.439..0.441 rows=21 loops=1)
+   Sort Key: (to_char((to_timestamp(((floor((EXTRACT(epoch FROM bucket_start) / '3600'::numeric)) * '3600'::numeric))::double precision) AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'::text)), service NULLS FIRST
+   Sort Method: quicksort  Memory: 26kB
+   Buffers: shared hit=5
+   ->  HashAggregate  (cost=6.85..7.37 rows=14 width=74) (actual time=0.392..0.399 rows=21 loops=1)
+         Group Key: to_char((to_timestamp(((floor((EXTRACT(epoch FROM bucket_start) / '3600'::numeric)) * '3600'::numeric))::double precision) AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'::text), service
+         Batches: 1  Memory Usage: 24kB
+         Buffers: shared hit=2
+         ->  Seq Scan on logs_agg_1m  (cost=0.00..5.99 rows=114 width=50) (actual time=0.191..0.351 rows=119 loops=1)
+               Filter: ((bucket_start >= '2026-08-16 12:00:00+00'::timestamp with time zone) AND (bucket_start < '2026-08-16 18:00:00+00'::timestamp with time zone))
+               Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=134 read=7
+ Planning Time: 0.645 ms
+ Execution Time: 0.537 ms
+(15 rows)
+

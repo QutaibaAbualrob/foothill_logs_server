@@ -14,8 +14,8 @@ the outline, the exact commands, and the numbers to show.
   machine). Substitute the base URL accordingly in every command below.
 - Pre-record, once, so the demo has real data: run the benchmark for ~30 s,
   then a drain with `EXPECT_TOTAL` set — this both seeds ~600k rows and gives
-  the numbers quoted below. All figures are **preliminary — pre-final-run**;
-  say so on camera.
+  the numbers quoted below. Figures are from the final run in
+  `bench/results/final.md`; substitute your own run's numbers.
 - Keep a second terminal pane open for `psql`/`docker compose logs` shots.
 - Do not cut between the ingestion request and its response — the point is
   that they are one event.
@@ -180,14 +180,18 @@ Walk the plan on screen: `Limit` over a `Merge Append` of backward index
 scans — **1.6 ms, 34 shared-buffer hits, no sort node**. The primary key
 *is* the pagination index; that is the index-justification beat.
 
-Numbers (all **preliminary — pre-final-run**, say the words):
+Numbers (final run, `bench/results/final.md` — reproducible by the scripts
+below; substitute your own run's dataset):
 
-- Ingestion: **19,504 logs/s** sustained over 30 s, 64 workers, batch 200;
-  599,600 accepted, 0 errors; whole-batch p50/p95/p99 610/901/1150 ms.
-- Aggregate p95 **112 ms** concurrent with ingestion (requirement < 1 s).
-- Drain: 69.6 pages/s, 69,596 rows/s; page p50/p95/p99 11.7/26.1/79.5 ms;
-  0 duplicates, 0 ordering violations across 599,635 rows.
-- Storage: 203 MB at ~600k rows, **110 MB of it indexes** — reported honestly.
+- Ingestion: **21,187 logs/s** sustained over 30 s, 64 workers, batch 200;
+  649,600 accepted, 0 errors; whole-batch p50/p95/p99 564/847/915 ms.
+- Aggregate p95 **101 ms** concurrent with ingestion (requirement < 1 s).
+- Drain: 86.8 pages/s, 86,761 rows/s over 3,001,180 rows; page p50/p95/p99
+  9.4/16.1/75.7 ms; 0 duplicates, 0 ordering violations, exact `COUNT(*)`
+  match.
+- Storage: 1,495 MB at 3 M rows, **514 MB of it indexes** — reported honestly.
+- Resources: app ~41–50% of 0.5 CPU, 41–55 MB RSS; PostgreSQL ~45–49% of
+  1 CPU, ~327 MB RSS; buffer hit ratio 97.3%.
 
 **Bottlenecks / optimisations beat (the honest one):**
 
@@ -206,7 +210,7 @@ Numbers (all **preliminary — pre-final-run**, say the words):
 > "Group commit makes acceptance and queryability the same event; a
 > rollup-and-edges aggregate path keeps counts exact; a keyset cursor walks a
 > million rows in deterministic order; retention is a partition drop. The one
-> number still open is page latency — 26 ms against an 8 ms target — and
+> number still open is page latency — 16.1 ms against an 8 ms target — and
 > that's on the record."
 
 ---

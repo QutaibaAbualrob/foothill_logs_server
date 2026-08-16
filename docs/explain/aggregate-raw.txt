@@ -1,0 +1,31 @@
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate  (cost=50687.08..54005.67 rows=11712 width=71) (actual time=3922.684..3927.853 rows=8 loops=1)
+   Group Key: (to_char((to_timestamp(((floor((EXTRACT(epoch FROM logs."timestamp") / '3600'::numeric)) * '3600'::numeric))::double precision) AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'::text)), logs.service
+   Buffers: shared hit=26747 read=1909
+   ->  Gather Merge  (cost=50687.08..53420.07 rows=23424 width=47) (actual time=3922.674..3927.839 rows=24 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=26747 read=1909
+         ->  Sort  (cost=49687.05..49716.33 rows=11712 width=47) (actual time=3919.601..3919.603 rows=8 loops=3)
+               Sort Key: (to_char((to_timestamp(((floor((EXTRACT(epoch FROM logs."timestamp") / '3600'::numeric)) * '3600'::numeric))::double precision) AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'::text)), logs.service NULLS FIRST
+               Sort Method: quicksort  Memory: 25kB
+               Buffers: shared hit=26747 read=1909
+               Worker 0:  Sort Method: quicksort  Memory: 25kB
+               Worker 1:  Sort Method: quicksort  Memory: 25kB
+               ->  Partial HashAggregate  (cost=48544.22..48895.58 rows=11712 width=47) (actual time=3919.475..3919.554 rows=8 loops=3)
+                     Group Key: to_char((to_timestamp(((floor((EXTRACT(epoch FROM logs."timestamp") / '3600'::numeric)) * '3600'::numeric))::double precision) AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'::text), logs.service
+                     Batches: 1  Memory Usage: 409kB
+                     Buffers: shared hit=26731 read=1909
+                     Worker 0:  Batches: 1  Memory Usage: 409kB
+                     Worker 1:  Batches: 1  Memory Usage: 409kB
+                     ->  Parallel Seq Scan on logs_2026_08 logs  (cost=0.00..46056.19 rows=199042 width=39) (actual time=0.220..3521.580 rows=477667 loops=3)
+                           Filter: (("timestamp" >= '2026-08-16 12:00:00+00'::timestamp with time zone) AND ("timestamp" < '2026-08-16 18:00:00+00'::timestamp with time zone) AND (strpos(lower(message), 'benchmark'::text) > 0))
+                           Rows Removed by Filter: 48
+                           Buffers: shared hit=26731 read=1909
+ Planning:
+   Buffers: shared hit=321
+ Planning Time: 1.080 ms
+ Execution Time: 3928.280 ms
+(27 rows)
+

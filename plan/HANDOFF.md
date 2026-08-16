@@ -220,9 +220,9 @@ BASE_URL=http://127.0.0.1:8081 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT npm run bench:
 
 - One variable per experiment; re-run G1 before keeping any Phase 4 change.
 - A target that is missed is written down as missed, with the measured number.
-  The 8 ms page target is currently missed at 26 ms — say so until it is not.
+  The 8 ms page target is missed at 16.1 ms — say so until it is not.
 - Every README figure must be reproducible by a script in this repository.
-- Nothing in the tree should read as though it were written for a grader rather
-  than for an engineer. A previous hardcoded `marker` attribute and its
+- Nothing in the tree should read as though it were written to score points
+  rather than for an engineer. A previous hardcoded `marker` attribute and its
   "score harness" comment have already been generalised into
   `HOT_ATTRIBUTE_KEYS`; keep that standard.
