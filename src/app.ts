@@ -1,6 +1,6 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import type { DatabasePools } from "./db/pools.js";
-import { isPoolTimeout } from "./db/pools.js";
+import { isDatabaseUnavailable } from "./db/pools.js";
 import { HttpError } from "./errors.js";
 import type { WriteBatcher } from "./ingest/batcher.js";
 import { validateIngestBody } from "./ingest/validation.js";
@@ -83,9 +83,13 @@ export function createApp(dependencies: AppDependencies): express.Express {
       response.status(413).json({ error: "request body is too large" });
       return;
     }
-    if (isPoolTimeout(error)) {
+    // The database being down, restarting, or saturated is a server-side
+    // availability problem, not a bad request and not an internal defect. It
+    // must be a retryable 503 so a client backs off instead of discarding the
+    // batch, and so an outage never shows up as a 500.
+    if (isDatabaseUnavailable(error)) {
       response.setHeader("Retry-After", "1");
-      response.status(503).json({ error: "database is busy" });
+      response.status(503).json({ error: "database is unavailable" });
       return;
     }
     console.error(JSON.stringify({

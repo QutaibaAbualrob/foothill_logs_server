@@ -14,6 +14,8 @@
     "test": "tsx --test test/**/*.test.ts",
     "test:integration": "tsx --test test/integration/**/*.test.ts",
     "smoke": "node scripts/contract-smoke.mjs",
+    "reliability": "node scripts/reliability-check.mjs",
+    "drill": "bash scripts/failure-drill.sh",
     "bench": "node scripts/benchmark.mjs",
     "bench:drain": "node scripts/drain.mjs",
     "migrate": "tsx src/db/migrate-cli.ts"

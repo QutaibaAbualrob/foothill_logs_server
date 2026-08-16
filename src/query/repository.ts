@@ -1,6 +1,6 @@
 import type { Pool, QueryResultRow } from "pg";
 import { HttpError } from "../errors.js";
-import { isPoolTimeout } from "../db/pools.js";
+import { isDatabaseUnavailable } from "../db/pools.js";
 import type { Attributes, LogLevel, LogResult } from "../types.js";
 import { buildPredicates } from "./builder.js";
 import { CursorCodec } from "./cursor.js";
@@ -70,7 +70,7 @@ export class PgLogQueryRepository {
             : null,
       };
     } catch (error) {
-      if (isPoolTimeout(error)) throw new HttpError(503, "query pool is busy", 1);
+      if (isDatabaseUnavailable(error)) throw new HttpError(503, "database is unavailable", 1);
       throw error;
     }
   }
@@ -91,7 +91,7 @@ export class PgLogQueryRepository {
         count: safeCount(row.count),
       }));
     } catch (error) {
-      if (isPoolTimeout(error)) throw new HttpError(503, "query pool is busy", 1);
+      if (isDatabaseUnavailable(error)) throw new HttpError(503, "database is unavailable", 1);
       throw error;
     }
   }
