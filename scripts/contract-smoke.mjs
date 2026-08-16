@@ -125,6 +125,41 @@ assert.equal(aggregate.body.buckets.length, 1);
 assert.equal(aggregate.body.buckets[0].group, service);
 assert.equal(aggregate.body.buckets[0].count, 5);
 
+// G1: a range not aligned to a minute boundary must count edge minutes only
+// for the requested span. Seed 6 rows in one minute: 3 at +5s, 3 at +40s.
+// A range of [+10s, +50s) must return exactly the 3 rows at +40s; a naive
+// whole-minute rollup would count all 6.
+const edgeService = `edge-${run}`;
+const edgeMinute = new Date(Date.now() - 120_000);
+edgeMinute.setUTCSeconds(0, 0);
+const edgeAt = (second) => new Date(edgeMinute.getTime() + second * 1000).toISOString().replace(".000Z", ".100000Z");
+const edgeIngest = await request("/logs", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    logs: [
+      ...Array.from({ length: 3 }, (_, index) => ({
+        timestamp: edgeAt(5 + index), level: "info", service: edgeService, message: `edge-early-${index}`,
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        timestamp: edgeAt(40 + index), level: "info", service: edgeService, message: `edge-late-${index}`,
+      })),
+    ],
+  }),
+});
+assert.equal(edgeIngest.response.status, 200);
+assert.equal(edgeIngest.body.accepted, 6);
+const edgeAggregate = await request(
+  `/logs/aggregate?since=${encodeURIComponent(edgeAt(10))}&until=${encodeURIComponent(edgeAt(50))}&bucket=1m&service=${encodeURIComponent(edgeService)}`,
+);
+assert.equal(edgeAggregate.response.status, 200);
+assert.equal(edgeAggregate.body.buckets.length, 1);
+assert.equal(
+  edgeAggregate.body.buckets[0].count,
+  3,
+  "unaligned range must count only the rows inside the edge slices, not the whole edge minutes",
+);
+
 const badCursor = await request("/logs?cursor=not-a-cursor");
 assert.equal(badCursor.response.status, 400);
 
