@@ -41,21 +41,32 @@ the full drain walk. One run at a time; the two stacks were never up together.
 
 Both traps recorded in `2026-08-17-fastify-vs-express/README.md` are respected:
 
-1. **Host drift.** That file measured `main` at 8,170 logs/s in the morning and
-   10,532 in the afternoon, so cross-session A/Bs are worthless here. These four
-   runs are one session, interleaved node → bun → node → bun, clean volume each.
-   The two Node runs landed 5% apart (8,639 / 9,076) and the two Bun runs 3%
-   apart (20,216 / 20,875) — the gap between runtimes is an order of magnitude
-   larger than the spread within either.
+1. **Interleave and repeat.** These four runs are one session, interleaved
+   node → bun → node → bun, clean volume each. The two Node runs landed 5% apart
+   (8,639 / 9,076) and the two Bun runs 3% apart (20,216 / 20,875) — the gap
+   between runtimes is an order of magnitude larger than the spread within
+   either.
+
+   *Amended 2026-08-17:* this section originally cited that file's "host drifts
+   ~29% between sessions" claim, which has since been **withdrawn**. That claim
+   came from comparing an Express run against a Fastify run under the same
+   label — trap 2, in other words. Measured noise is ~6% within a session and
+   ~11% across. The two Node + Express runs recorded here (8,639 / 9,076) are
+   part of what corroborated the 8,170 baseline and exposed the error.
+
+   The requirement to interleave and repeat is unchanged; the reason is ordering
+   effects, growing table size and mislabelled builds rather than an unstable
+   machine.
 2. **A label is not proof of what is running.** Each run asked the container
    what it was before measuring, recorded in the run log as `PROOF pid1`:
    `node dist/src/index.js` versus `bun run src/index.ts`, with
    `ls node_modules | grep -xE "fastify|express"` returning `express` on all
    four. All rows are `validity: verified`.
 
-Two runs per side is below the three the drift note asks for. The direction is
-not in doubt at this margin, but treat **2.3×** as the measured range's midpoint
-rather than a settled constant.
+Two runs per side is below the three the protocol asks for. The direction is not
+in doubt at this margin — a 130% gap against 3–5% within-runtime spread survives
+the ~6% session noise comfortably — but treat **2.3×** as the measured range's
+midpoint rather than a settled constant.
 
 ## The drain numbers are not a like-for-like comparison
 

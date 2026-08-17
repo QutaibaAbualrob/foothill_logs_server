@@ -216,10 +216,13 @@ Read it with three limits attached:
 - **Batch 33 is the friendliest point for this swap.** It is where the recorded
   profile put the application at 96% of its cap. Batch 200, where the framework
   and runtime share of on-CPU time is far smaller, was not run.
-- **Two runs per side**, where the host-drift note in
+- **Two runs per side**, where the measurement protocol in
   `bench/results/2026-08-17-fastify-vs-express/README.md` asks for three. Within
   each runtime the spread was 5% (Node) and 3% (Bun), against a 130% gap between
   them, so the direction is not in doubt; the exact multiple is not settled.
+  (That file's "host drift" framing was withdrawn on 2026-08-17 — it was itself
+  a mislabelled-build artefact. Session noise is ~6%, which this margin clears
+  easily. The interleave-and-repeat requirement is unchanged.)
 
 The drain walks are **not** like-for-like — each covers whatever its own run
 ingested, so Bun's walked 2.3× the rows against a 2.3× larger index. Bun was
