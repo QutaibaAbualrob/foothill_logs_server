@@ -4,6 +4,12 @@ temp/
 # Local planning notes
 plan/internal/
 
+# Local reference material — must never ship in this repository
+# (details: plan/internal/SANITIZATION.md)
+analysis/reference/
+analysis/evidence/
+analysis/archive/
+
 # Build output and dependencies
 node_modules/
 dist/
@@ -13,3 +19,4 @@ coverage/
 .env
 *.log
 bench/raw/
+.hermes/
