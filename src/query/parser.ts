@@ -1,4 +1,3 @@
-import type { Request } from "express";
 import { HttpError } from "../errors.js";
 import { LOG_LEVELS, type LogLevel } from "../types.js";
 import { CursorCodec, filterHash } from "./cursor.js";
@@ -10,7 +9,10 @@ const GROUPS = new Set<GroupBy>(["service", "level"]);
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const FRACTIONAL_SECONDS = /\.(\d{1,9})(?=Z|[+-]\d{2}:\d{2}$)/;
 
-type RawQuery = Request["query"];
+// Previously `Request["query"]` from Express. The shape is what
+// `querystring.parse` produces, which is what the app configures Fastify to
+// use, so the parser's semantics are unchanged by the framework swap.
+export type RawQuery = Record<string, string | string[] | undefined>;
 
 export function parseLogQuery(query: RawQuery, cursors: CursorCodec): ParsedLogQuery {
   const filters = parseFilters(query);
