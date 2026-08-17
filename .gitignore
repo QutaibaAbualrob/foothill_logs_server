@@ -20,3 +20,12 @@ coverage/
 *.log
 bench/raw/
 .hermes/
+
+# Measurement write-ups and their CSV index are tracked under bench/results/,
+# but raw harness output and CPU profiles are not: profiles carry the service's
+# full call tree, and the volume does not belong in a public tree. Those live in
+# the private analysis repo only — see plan/internal/SANITIZATION.md §7.
+bench/results/**/raw/
+bench/results/**/profiles/
+*.cpuprofile
+*.cpuprofile.gz

@@ -1,0 +1,60 @@
+file,kind,framework,validity,batch_size,concurrency,duration_s,elapsed_s,accepted,errors,logs_per_second,ingest_p50_ms,ingest_p95_ms,ingest_p99_ms,aggregate_p95_ms,started_at,note
+ab2-fastify-node-b200-run1.json,ingest,express,relabelled,200,96,30,30.621,428000,0,13977.3,1342.1,1731.0,2448.2,608.4,2026-08-17T18:38:53.973Z,"A/B set 2 - filename says fastify, build was Express"
+ab2-fastify-node-b200-run2.json,ingest,express,relabelled,200,96,30,31.299,439400,0,14039,1332.3,1604.8,1726.2,512.6,2026-08-17T18:40:30.079Z,"A/B set 2 - filename says fastify, build was Express"
+ab2-fastify-node-b200-run3.json,ingest,express,relabelled,200,96,30,30.591,429000,0,14023.6,1362.0,1672.0,2258.6,584.1,2026-08-17T18:41:53.644Z,"A/B set 2 - filename says fastify, build was Express"
+ab2-main-b200-run1.json,ingest,fastify,relabelled,200,96,30,31.273,501800,0,16045.6,1131.7,1520.9,2130.7,484.4,2026-08-17T18:38:11.587Z,"A/B set 2 - filename says main, build was Fastify"
+ab2-main-b200-run2.json,ingest,fastify,relabelled,200,96,30,30.392,479400,0,15773.9,1184.2,1565.9,1901.8,410.5,2026-08-17T18:39:48.469Z,"A/B set 2 - filename says main, build was Fastify"
+ab2-main-b200-run3.json,ingest,fastify,relabelled,200,96,30,31.321,496800,0,15861.8,1131.8,1505.4,1781.9,609.5,2026-08-17T18:41:12.424Z,"A/B set 2 - filename says main, build was Fastify"
+ab3-fastify-node-b200-run1.json,ingest,fastify,verified,200,96,30,30.59,461800,0,15096.3,1198.7,1812.9,1891.5,566.6,2026-08-17T18:52:43.777Z,A/B set 3 - labels verified in-container
+ab3-fastify-node-b200-run2.json,ingest,fastify,verified,200,96,30,30.527,446600,0,14629.9,1311.4,1702.6,2071.3,592.1,2026-08-17T18:54:06.011Z,A/B set 3 - labels verified in-container
+ab3-fastify-node-b200-run3.json,ingest,fastify,verified,200,96,30,30.498,464000,0,15214.1,1199.4,1718.7,2644.4,501.7,2026-08-17T18:55:43.179Z,A/B set 3 - labels verified in-container
+ab3-main-b200-run1.json,ingest,express,verified,200,96,30,31.096,420800,0,13532.1,1381.4,1829.1,2208.4,581.0,2026-08-17T18:51:47.597Z,A/B set 3 - labels verified in-container
+ab3-main-b200-run2.json,ingest,express,verified,200,96,30,30.588,423200,0,13835.3,1325.8,1861.6,1902.6,584.7,2026-08-17T18:53:24.534Z,A/B set 3 - labels verified in-container
+ab3-main-b200-run3.json,ingest,express,verified,200,96,30,30.67,441000,0,14379.1,1283.2,1683.0,1808.1,727.9,2026-08-17T18:54:46.488Z,A/B set 3 - labels verified in-container
+batch200-gctrace.INVALID-harness-error.json,ingest,express,valid-single-session,200,96,60,60.696,0,133276,0,,,,,2026-08-17T17:55:48.952Z,"morning baseline + profiling runs, cross-session only"
+batch200-gctrace2.json,ingest,express,valid-single-session,200,96,60,60.906,850600,0,13965.8,1354.5,1722.3,2017.7,786.0,2026-08-17T17:57:26.116Z,"morning baseline + profiling runs, cross-session only"
+batch200-profiled-4cpu.json,ingest,express,valid-single-session,200,96,60,60.41,1694800,0,28054.8,667.1,848.0,991.7,110.2,2026-08-17T17:59:51.106Z,"morning baseline + profiling runs, cross-session only"
+batch200-profiled.json,ingest,express,valid-single-session,200,96,60,60.939,716400,0,11756,1600.4,2110.6,2353.5,843.2,2026-08-17T17:54:02.917Z,"morning baseline + profiling runs, cross-session only"
+batch33-curve-b200.json,ingest,express,valid-single-session,200,96,30,30.192,437400,0,14487.4,1284.9,1634.2,2236.2,606.4,2026-08-17T17:48:51.778Z,"morning baseline + profiling runs, cross-session only"
+batch33-curve-b50.json,ingest,express,valid-single-session,50,96,30,30.403,288950,0,9504.1,487.1,790.1,916.2,263.0,2026-08-17T17:48:20.962Z,"morning baseline + profiling runs, cross-session only"
+batch33-curve-b500.json,ingest,express,valid-single-session,500,96,30,31.676,482000,0,15216.6,3075.0,3712.5,3936.8,1307.0,2026-08-17T17:49:22.389Z,"morning baseline + profiling runs, cross-session only"
+batch33-profiled.json,ingest,express,valid-single-session,33,96,60,60.255,396000,0,6572,434.5,803.9,1151.3,211.2,2026-08-17T17:51:37.472Z,"morning baseline + profiling runs, cross-session only"
+batch33.json,ingest,express,valid-single-session,33,96,60,60.952,497970,0,8169.8,378.2,603.8,706.8,203.5,2026-08-17T17:46:55.724Z,"morning baseline + profiling runs, cross-session only"
+fastify-b200.json,ingest,fastify,void-as-comparison,200,96,30,30.788,517400,0,16805,1110.5,1421.7,1477.9,553.0,2026-08-17T18:28:30.084Z,four-point curve; its paired 'main' run was also Fastify
+fastify-b33.json,ingest,fastify,void-as-comparison,33,96,60,61.043,693792,0,11365.7,266.8,458.1,518.3,180.0,2026-08-17T18:26:57.722Z,four-point curve; its paired 'main' run was also Fastify
+fastify-b50.json,ingest,fastify,void-as-comparison,50,96,30,31.057,388650,0,12513.9,371.7,589.2,632.0,264.0,2026-08-17T18:27:58.917Z,four-point curve; its paired 'main' run was also Fastify
+fastify-b500.json,ingest,fastify,void-as-comparison,500,96,30,31.307,502000,0,16034.6,2892.1,3465.7,9330.5,877.4,2026-08-17T18:29:00.971Z,four-point curve; its paired 'main' run was also Fastify
+fastify-drain.json,drain,fastify,void-as-comparison,,,,65.413,2101842,0,,18.7,85.8,114.9,,2026-08-17T18:29:33.273Z,"four-point curve; its paired 'main' run was also Fastify | pages/s 32.1, reachedEnd true"
+linux-diag-bench-app2cpu.json,ingest,express,historical,200,96,30,30.523,780600,0,25574,648.6,1073.9,2772.2,90.0,2026-08-17T11:33:29.901Z,"earlier session, different day/state"
+linux-diag-drain-app2cpu.json,drain,express,historical,,,,90.41,3930000,0,,18.2,39.0,131.7,,2026-08-17T11:31:59.358Z,"earlier session, different day/state | pages/s 43.5, reachedEnd true"
+linux-verify-3m-ingest.json,ingest,express,historical,200,96,220,221.075,3165800,0,14320.1,1314.3,1716.5,1991.4,580.9,2026-08-17T11:22:29.782Z,"earlier session, different day/state"
+linux-verify-b200-bench.json,ingest,express,historical,200,96,30,30.69,446000,0,14532.3,1285.7,1777.3,2226.8,499.1,2026-08-17T11:17:51.302Z,"earlier session, different day/state"
+linux-verify-drain-30s.json,drain,express,historical,,,,30.006,1154000,0,,17.9,74.9,92.3,,2026-08-17T11:26:56.583Z,"earlier session, different day/state | pages/s 38.5, reachedEnd false"
+linux-verify-drain-full.json,drain,express,historical,,,,98.405,3165800,0,,18.5,87.3,107.3,,2026-08-17T11:27:43.889Z,"earlier session, different day/state | pages/s 32.2, reachedEnd true"
+linux-verify-mixed-workload.json,ingest,express,historical,200,32,,60.171,764200,,12700.5,,,,,2026-08-17T11:30:27.831Z,"earlier session, different day/state"
+linux-verify-sweep-b200.json,ingest,express,historical,200,96,30,30.843,429400,0,13922.3,1305.6,1754.5,2245.0,562.2,2026-08-17T11:19:48.528Z,"earlier session, different day/state"
+linux-verify-sweep-b50.json,ingest,express,historical,50,96,30,30.777,266800,0,8668.9,506.3,816.4,1177.3,257.7,2026-08-17T11:19:04.648Z,"earlier session, different day/state"
+linux-verify-sweep-b500.json,ingest,express,historical,500,96,30,31.778,451500,1,14207.9,3378.7,4140.9,6912.9,2927.5,2026-08-17T11:20:36.649Z,"earlier session, different day/state"
+main-3m-ingest.json,ingest,express,historical,200,96,230,230.816,3220200,0,13951.4,1349.8,1777.3,1911.3,632.3,2026-08-17T14:33:54.671Z,"earlier session, different day/state"
+main-b200-bench.json,ingest,express,historical,200,96,30,30.799,430800,0,13987.3,1334.3,1913.0,2918.3,678.6,2026-08-17T14:30:40.313Z,"earlier session, different day/state"
+main-diag-bench-app2cpu.json,ingest,express,historical,200,96,30,30.632,768400,0,25084.9,662.6,1077.6,3184.6,68.8,2026-08-17T14:44:04.028Z,"earlier session, different day/state"
+main-diag-drain-app2cpu.json,drain,express,historical,,,,77.215,3985400,0,,17.8,23.7,36.0,,2026-08-17T14:42:46.689Z,"earlier session, different day/state | pages/s 51.6, reachedEnd true"
+main-drain-30s.json,drain,express,historical,,,,30.04,1111000,0,,18.1,78.6,102.8,,2026-08-17T14:38:17.370Z,"earlier session, different day/state | pages/s 37, reachedEnd false"
+main-drain-full.json,drain,express,historical,,,,98.204,3220200,0,,18.1,87.4,107.7,,2026-08-17T14:38:47.511Z,"earlier session, different day/state | pages/s 32.8, reachedEnd true"
+main-mixed-workload.json,ingest,express,historical,200,32,,60.239,765200,,12702.8,,,,,2026-08-17T14:40:50.271Z,"earlier session, different day/state"
+main-rerun-b200.json,ingest,fastify,void-as-comparison,200,96,30,31.18,480400,0,15407.3,1221.2,1521.0,1577.5,591.1,2026-08-17T18:33:39.279Z,labelled main but tree held the Fastify commit
+main-rerun-b33.json,ingest,fastify,void-as-comparison,33,96,60,60.858,640959,0,10532.1,294.4,492.9,622.9,185.7,2026-08-17T18:32:07.552Z,labelled main but tree held the Fastify commit
+main-rerun-b50.json,ingest,fastify,void-as-comparison,50,96,30,30.635,400650,0,13078.1,365.0,519.7,690.0,230.7,2026-08-17T18:33:08.544Z,labelled main but tree held the Fastify commit
+main-rerun-b500.json,ingest,fastify,void-as-comparison,500,96,30,32.021,497000,0,15521,3091.0,3377.6,3410.5,1926.6,2026-08-17T18:34:10.548Z,labelled main but tree held the Fastify commit
+main-rerun-drain.json,drain,fastify,void-as-comparison,,,,62.756,2019009,0,,18.1,87.9,106.3,,2026-08-17T18:34:44.338Z,"labelled main but tree held the Fastify commit | pages/s 32.2, reachedEnd true"
+main-sweep-b200.json,ingest,express,historical,200,96,30,30.344,381800,0,12582.4,1468.8,2129.7,2446.7,630.8,2026-08-17T14:32:22.646Z,"earlier session, different day/state"
+main-sweep-b50.json,ingest,express,historical,50,96,30,30.26,250900,0,8291.5,549.0,864.9,907.1,299.3,2026-08-17T14:31:35.184Z,"earlier session, different day/state"
+main-sweep-b500.json,ingest,express,historical,500,96,30,31.117,429500,0,13802.9,3526.3,3998.7,6910.9,1215.3,2026-08-17T14:33:02.722Z,"earlier session, different day/state"
+warm-fastify-node-measured1.json,ingest,express,relabelled,200,96,30,31.107,426800,0,13720.5,1369.9,1957.8,2215.9,762.3,2026-08-17T18:44:53.455Z,warm-up controlled - filename inverted
+warm-fastify-node-measured2.json,ingest,express,relabelled,200,96,30,30.631,433200,0,14142.7,1299.2,1820.1,2211.5,715.9,2026-08-17T18:47:30.120Z,warm-up controlled - filename inverted
+warm-fastify-node-warmup1.json,ingest,express,relabelled,200,96,30,30.497,405400,0,13293.3,1403.4,1808.6,1841.5,731.2,2026-08-17T18:44:22.844Z,warm-up controlled - filename inverted
+warm-fastify-node-warmup2.json,ingest,express,relabelled,200,96,30,31.032,398800,0,12851.3,1419.9,1886.5,2532.2,624.3,2026-08-17T18:46:58.997Z,warm-up controlled - filename inverted
+warm-main-measured1.json,ingest,fastify,relabelled,200,96,30,30.607,441800,0,14434.8,1294.0,1692.4,1712.6,583.7,2026-08-17T18:43:40.814Z,warm-up controlled - filename inverted
+warm-main-measured2.json,ingest,fastify,relabelled,200,96,30,30.474,463600,0,15212.8,1286.3,1579.0,1615.1,511.1,2026-08-17T18:46:07.459Z,warm-up controlled - filename inverted
+warm-main-warmup1.json,ingest,fastify,relabelled,200,96,30,30.601,478000,0,15620.4,1183.6,1691.3,1948.9,519.7,2026-08-17T18:43:10.123Z,warm-up controlled - filename inverted
+warm-main-warmup2.json,ingest,fastify,relabelled,200,96,30,30.782,482400,0,15671.6,1116.8,1690.2,1846.7,504.4,2026-08-17T18:45:36.591Z,warm-up controlled - filename inverted
