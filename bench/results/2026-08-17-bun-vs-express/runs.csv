@@ -1,0 +1,5 @@
+pair,label,runtime,framework,started_utc,logs_per_s,errors,ingest_p50_ms,ingest_p95_ms,ingest_p99_ms,aggregate_p95_ms,drain_rows,drain_pages_per_s,page_p50_ms,page_p95_ms,duplicates,order_violations,reached_end,api_cpu_avg_pct,api_cpu_max_pct,pg_cpu_avg_pct,pg_cpu_max_pct,index_size,validity
+1,node,Node 22.18,express,2026-08-17T19:15:25.908Z,8638.9,0,345.4,597.1,681.6,173.2,526185,43.4,16.824,59.366,0,0,True,45.8,53.6,35.0,88.7,83 MB,verified
+1,bun,Bun 1.3.14,express,2026-08-17T19:17:17.322Z,20215.9,0,146.7,256.7,372.4,112.3,1214301,47.6,15.779,47.273,0,0,True,45.2,52.5,61.2,99.0,192 MB,verified
+2,node2,Node 22.18,express,2026-08-17T19:22:47.692Z,9075.9,0,324.8,531.2,681.6,236.2,553476,43.2,17.413,57.564,0,0,True,45.7,53.3,36.5,80.0,87 MB,verified
+2,bun2,Bun 1.3.14,express,2026-08-17T19:24:18.996Z,20875,0,140.4,238.8,349.3,73.6,1260501,47.6,15.848,48.546,0,0,True,45.4,53.5,60.7,103.9,199 MB,verified

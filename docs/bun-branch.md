@@ -170,39 +170,63 @@ The container is now resolved from the compose project actually being driven
 (`docker compose ps -q api`), with a hard failure if there is none. The fix is
 runtime-agnostic and the Fastify branch needs it just as much — see §6.
 
-## 5. What is NOT measured here, and why
+### 4.1 The same defect in `scripts/capture-resources.mjs`
 
-**No performance numbers.** `05-BENCHMARK-PROTOCOL.md` §1 rule 7 — one benchmark
-at a time on one machine — and the machine was not exclusive: a second compose
-stack running the Node build was under active load throughout this session, its
-postgres at ~58% CPU. Any batch-33 number taken against that
-background would be contention noise attributed to a runtime.
+Found while setting up the measurement in §5, and worse than the drill's version
+because it corrupts results rather than checks. The sampler hardcoded
+`["server_loger-api-1", "server_loger-postgres-1"]` while every other docker call
+in the file goes through `docker compose exec`, which follows
+`COMPOSE_PROJECT_NAME`. Run against any other project and the summary silently
+blends two stacks: PostgreSQL's WAL and size evidence from the project under
+test, the CPU and RSS columns from whichever project owns the hardcoded name. A
+runtime branch measured beside the shipped stack would have reported the other
+stack's CPU as its own — and CPU-at-the-cap is the whole argument in §5.
 
-The comparison to run, on an idle machine, against the recorded Node baseline in
-`docs/test_results/batch33-and-cpu-profile.md` §1 — 8,169.8 logs/s, 0 errors,
-ingest p50/p95/p99 378/604/707 ms, aggregate p95 203.5 ms, api CPU 47.9% of its
-50% cap:
+Containers are now resolved from the compose project (sampled by id, reported by
+name in the summary). Also runtime-agnostic; the Fastify branch needs it too.
 
-```bash
-export COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml
-export COMPOSE_PROJECT_NAME=logs-bun HOST_PORT=8090
-docker compose down -v && docker compose up -d --build --wait
+## 5. The measurement
 
-RUN_NAME=bun-batch33 DURATION_SECONDS=65 npm run bench:capture &
-CAPTURE_PID=$!
-BASE_URL=http://127.0.0.1:8090 DURATION_SECONDS=60 CONCURRENCY=96 BATCH_SIZE=33 \
-  RESULT_PATH=bench/raw/bun-batch33.json npm run bench
-wait "$CAPTURE_PID"
+Taken after the branch was built, once the host was free. Full record and the
+run index: `bench/results/2026-08-17-bun-vs-express/`.
 
-COUNT=$(docker compose exec -T postgres psql -U logger -d logs -tAc "SELECT count(*) FROM logs;" | tr -d '[:space:]')
-BASE_URL=http://127.0.0.1:8090 PAGE_SIZE=1000 EXPECT_TOTAL=$COUNT DEADLINE_SECONDS=30 \
-  RESULT_PATH=bench/raw/bun-drain.json npm run bench:drain
-```
+Two interleaved pairs, batch 33, 60 s, concurrency 96, clean volume per run,
+one stack up at a time, both containers sampled throughout:
 
-Record before/after for the four figures `agents.md` names: batch-33 throughput,
-ingest p50/p95/p99, aggregate p95, and the drain page rate. The clean volume
-matters — the Node baseline was taken from `down -v`, so a warm database here
-would not be comparable.
+| | Express + Node 22.18 | Express + Bun 1.3.14 |
+| --- | ---: | ---: |
+| Ingest | 8,638.9 / 9,075.9 logs/s | **20,215.9 / 20,875.0 logs/s** (2.34× / 2.30×) |
+| Ingest p50 / p95 | 345/597, 325/531 ms | **147/257, 140/239 ms** |
+| Aggregate p95 during ingestion | 173 / 236 ms | **112 / 74 ms** |
+| Errors | 0 | 0 |
+| api CPU avg | 45.8% / 45.7% of a 50% cap | 45.4% / 45.2% |
+| postgres CPU avg | 35.0% / 36.5% of a 100% cap | 61.2% / 60.7% |
+
+The api container sat at the same ceiling on both sides, so the gain is work
+done per CPU-second, not a cap that failed to apply — `NanoCpus` was confirmed
+at 500000000 and each run asked the container what it was running before
+measuring (`node dist/src/index.js` vs `bun run src/index.ts`, `express` in
+`node_modules` on all four).
+
+Read it with three limits attached:
+
+- **PostgreSQL is now near its own cap** under Bun — 61% average, 103.9% max of
+  a 100% cap — so the Bun figure is already partly database-limited. It is a
+  floor on the runtime's headroom rather than a ceiling.
+- **Batch 33 is the friendliest point for this swap.** It is where the recorded
+  profile put the application at 96% of its cap. Batch 200, where the framework
+  and runtime share of on-CPU time is far smaller, was not run.
+- **Two runs per side**, where the host-drift note in
+  `bench/results/2026-08-17-fastify-vs-express/README.md` asks for three. Within
+  each runtime the spread was 5% (Node) and 3% (Bun), against a 130% gap between
+  them, so the direction is not in doubt; the exact multiple is not settled.
+
+The drain walks are **not** like-for-like — each covers whatever its own run
+ingested, so Bun's walked 2.3× the rows against a 2.3× larger index. Bun was
+faster per page anyway (p95 47.3/48.5 ms vs 59.4/57.6 ms), but an equal-sized
+dataset is needed before that is a read-path claim. Correctness held in all four
+walks: 0 duplicates, 0 ordering violations, true end reached, unique ids equal
+to `count(*)`. Both runtimes miss the ≤8 ms page p95 target, as `main` does.
 
 The read/drain profile that `agents.md` §Next item 1 asks for is still not done,
 on either runtime. This branch does not close it.
@@ -256,6 +280,11 @@ Built to keep the merge boring:
   §3, which was taken after the load rather than during it. Corrected the
   `bun.lock` regeneration command in §6, which as written would have overwritten
   the checkout's npm `node_modules`.
+- 2026-08-17 — measured, §5 rewritten from "not measured" to the result: two
+  interleaved batch-33 pairs, Express on Bun at 2.3× Express on Node under the
+  same 0.5-CPU cap. Record in `bench/results/2026-08-17-bun-vs-express/`. Fixed
+  the same hardcoded-container defect in `scripts/capture-resources.mjs` that
+  §4 records for the drill — see §4.1.
 - 2026-08-17 — ran the suite on Bun's own runner (§3.1): 32 pass / 0 fail,
   name-for-name identical to the Node run. Both integration files executed
   against a real database on both runtimes rather than skipping, which is the

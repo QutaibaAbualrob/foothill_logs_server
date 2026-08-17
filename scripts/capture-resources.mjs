@@ -24,8 +24,33 @@ import { join } from "node:path";
 
 const runName = process.env.RUN_NAME ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-resources`;
 const durationSeconds = Number(process.env.DURATION_SECONDS ?? 60);
-const containers = ["server_loger-api-1", "server_loger-postgres-1"];
 const execFileAsync = promisify(execFile);
+
+/**
+ * The sampled containers are resolved from the compose project this capture is
+ * running against, never hardcoded. Every other docker call in this file goes
+ * through `docker compose exec`, which follows COMPOSE_PROJECT_NAME — so a
+ * hardcoded name here does not merely fail, it silently mixes two stacks into
+ * one results file: PostgreSQL's WAL and size evidence comes from the project
+ * under test while the CPU and RSS columns come from whichever project happens
+ * to own the hardcoded name. Bring a second stack up beside the shipped one —
+ * which is how a runtime or framework branch gets measured — and the run reports
+ * the other stack's CPU as its own.
+ */
+function resolveContainers() {
+  return ["api", "postgres"].map((service) => {
+    const id = execFileSync("docker", ["compose", "ps", "-q", service], { encoding: "utf8" })
+      .trim()
+      .split(/\r?\n/)[0];
+    if (!id) {
+      throw new Error(
+        `no running '${service}' container in this compose project; ` +
+          "set COMPOSE_FILE / COMPOSE_PROJECT_NAME to the stack under test",
+      );
+    }
+    return id;
+  });
+}
 
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runName)) {
   throw new Error("RUN_NAME must contain only letters, digits, dots, underscores, and hyphens");
@@ -33,6 +58,13 @@ if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runName)) {
 if (!Number.isInteger(durationSeconds) || durationSeconds < 1) {
   throw new Error("DURATION_SECONDS must be a positive integer");
 }
+
+// Sampled by id, reported by name: the id is what cannot be claimed by another
+// project, the name is what a reader of the summary needs.
+const containers = resolveContainers();
+const containerNames = containers.map((id) =>
+  execFileSync("docker", ["inspect", "-f", "{{.Name}}", id], { encoding: "utf8" }).trim().replace(/^\//, ""),
+);
 
 const repoRoot = process.cwd();
 const rawDir = join(repoRoot, "bench", "raw");
@@ -135,7 +167,7 @@ writeFileSync(
       endedAt: endedAt.toISOString(),
       elapsedSeconds: Number(((endedAt.getTime() - startedAt.getTime()) / 1000).toFixed(3)),
       sampleCycles,
-      containers,
+      containers: containerNames,
       postgres: {
         walLsnOffsetBytes: walLsn,
         ...sizes,
