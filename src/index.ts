@@ -1,4 +1,3 @@
-import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { closePools, createPools, probeDatabase, withDatabaseRetry } from "./db/pools.js";
@@ -41,18 +40,13 @@ const app = createApp({
   bodyLimit: config.bodyLimit,
   isReady: () => ready,
 });
-const server = createServer(app);
-server.keepAliveTimeout = 65_000;
-server.headersTimeout = 66_000;
-server.requestTimeout = 30_000;
+// Fastify creates and owns the HTTP server; the timeouts are set on it
+// directly so they stay identical to the values the service shipped with.
+app.server.keepAliveTimeout = 65_000;
+app.server.headersTimeout = 66_000;
+app.server.requestTimeout = 30_000;
 
-await new Promise<void>((resolve, reject) => {
-  server.once("error", reject);
-  server.listen(config.port, "0.0.0.0", () => {
-    server.off("error", reject);
-    resolve();
-  });
-});
+await app.listen({ port: config.port, host: "0.0.0.0" });
 ready = true;
 // Retention is a background maintenance concern: if it cannot acquire its lock
 // or reach the database at startup, the service still serves traffic.
@@ -77,7 +71,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(JSON.stringify({ event: "shutdown", signal }));
   const timeout = setTimeout(() => process.exit(1), config.shutdownTimeoutMs);
   timeout.unref();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await app.close();
   await batcher.close();
   await retention.stop();
   await closePools(pools);
