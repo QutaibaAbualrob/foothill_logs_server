@@ -1,6 +1,6 @@
 # Express vs Fastify — measured runs, 2026-08-17
 
-`runs.csv` indexes every benchmark run taken on 2026-08-17: 59 rows, one per
+`runs.csv` indexes every benchmark run taken on 2026-08-17: 65 rows, one per
 run, measured on native Linux under the shipped caps (api 0.5 CPU / 256 MB,
 postgres 1.0 CPU / 1 GB).
 
@@ -30,11 +30,11 @@ its 50% cap — the application is the constraint there, not PostgreSQL.
 
 ## Reading the CSV
 
-The `validity` column is load-bearing. Not all 59 rows are comparable:
+The `validity` column is load-bearing. Not all 65 rows are comparable:
 
 | validity | rows | use |
 | --- | ---: | --- |
-| `verified` | 6 | The container was asked which framework it had before each run. **Use these for any claim.** |
+| `verified` | 12 | Batch 200 and batch 33, three interleaved pairs each. The container was asked which framework it had before every run. **Use these for any claim.** |
 | `relabelled` | 14 | Sound data, but the **filename's branch label is inverted**. The `framework` column is corrected; trust it over the filename. |
 | `valid-single-session` | 9 | Express baseline and profiling runs. Valid alone, not comparable across sessions. |
 | `void-as-comparison` | 10 | Both sides of these pairs were Fastify. Useless as a comparison. |
