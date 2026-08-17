@@ -85,14 +85,40 @@ The startup path also works unchanged: migrations applied from `src/db/migration
 retention pass ran, and the service logged `{"event":"ready"}`.
 
 **Stability observation, not a benchmark:** that SIGTERM section pushed 410,800
-rows through the Bun container in ~15 s at 32 workers × batch 200 with no
-OOM kill and no restart, at ~71 MiB RSS against the 256 MB cap. It says the
-runtime is stable under real ingest load at the shipped caps. It says nothing
-about throughput — the machine was not exclusive (see §5).
+rows through the Bun container in ~15 s at 32 workers × batch 200 with no OOM
+kill and no restart. `docker stats` shortly after the run — not during it —
+read 71 MiB RSS against the 256 MB cap; no peak figure was captured, so treat
+that as a floor rather than a headroom claim. It says the runtime is stable
+under real ingest load at the shipped caps. It says nothing about throughput —
+the machine was not exclusive (see §5).
+
+### 3.1 Error mapping, checked by hand — and a gap in the gates
+
+The malformed-JSON and oversized-body branches in `app.ts` read `error.type`
+off `body-parser`'s error objects, which is the kind of thing a runtime swap
+breaks quietly: the status turns into a 500 and only a client notices. `npm run
+smoke` covers malformed JSON, but **no gate in the repository covers the 413
+path** — `reliability-check.mjs` never sends an oversized body. Checked directly
+against the Bun stack:
+
+| Probe | Result on Bun |
+| --- | --- |
+| `POST /logs`, ~6 MB body against the 4 MB limit | **413** `{"error":"request body is too large"}` |
+| `POST /logs`, body `{bad-json` | **400** `{"error":"malformed JSON"}` |
+| `POST /logs`, `content-type: text/plain` | **400** `{"error":"request body must be an object containing a logs array"}` |
+| `GET /nope` | **404** `{"error":"not found"}` |
+
+The missing 413 case is a pre-existing coverage gap on `main`, not something
+this branch introduced; it is worth adding to `reliability-check.mjs` on main
+rather than on either experiment branch.
+
+The compose healthcheck was verified to *fail* as well as pass, since a probe
+that can only succeed makes `--wait` meaningless: under Bun it exits 1 on
+connection-refused, exits 1 on a 503 response, and exits 0 on 200.
 
 ## 4. A defect found on the way — `scripts/failure-drill.sh`
 
-The drill hardcoded the container name `server_loger-api-1` in eleven places
+The drill hardcoded the container name `server_loger-api-1` in thirteen places
 while its HTTP probes followed `BASE_URL`. Under a second compose project — which
 is exactly how a runtime or framework branch gets brought up beside the shipped
 stack — the two halves point at different stacks, and it fails silently in the
@@ -153,9 +179,18 @@ Built to keep the merge boring:
   paths, no conflict.
 - **`package.json`**: expect a conflict if the Fastify branch changes
   dependencies. Both sides are additive — keep the Fastify dependency changes
-  *and* the three `bun` entries added here. Regenerate `bun.lock` after the merge
-  so it carries fastify:
-  `docker run --rm -v "$PWD":/w -w /w -u "$(id -u):$(id -g)" -e HOME=/tmp oven/bun:1.3.14-slim bun install --ignore-scripts`
+  *and* the three `bun` entries added here. Then regenerate `bun.lock` so it
+  carries fastify — otherwise `--frozen-lockfile` fails the image build, which
+  is the loud failure this is meant to have. Regenerate in a scratch directory
+  rather than in the checkout, so that bun does not overwrite the npm-installed
+  `node_modules` the Node-side gates use:
+
+  ```bash
+  d=$(mktemp -d) && cp package.json package-lock.json bun.lock "$d"/
+  docker run --rm -v "$d":/w -w /w -u "$(id -u):$(id -g)" -e HOME=/tmp \
+    oven/bun:1.3.14-slim bun install --ignore-scripts
+  cp "$d"/bun.lock bun.lock
+  ```
 - **`scripts/failure-drill.sh`**: the one file likely to conflict for real, since
   the Fastify branch needs the same fix. The two versions should be the same
   change; take either side, then confirm no `server_loger-api-1` remains.
@@ -174,3 +209,10 @@ Built to keep the merge boring:
 
 - 2026-08-17 — created with the branch. Gate results in §3, drill defect in §4,
   the unmeasured comparison in §5.
+- 2026-08-17 — review pass over this branch. Added §3.1: the error-mapping
+  probes, the healthcheck's failure path, and the 413 coverage gap on main.
+  Corrected two figures in this file that its own evidence did not support —
+  the hardcoded-name count in §4 (thirteen, not eleven) and the RSS reading in
+  §3, which was taken after the load rather than during it. Corrected the
+  `bun.lock` regeneration command in §6, which as written would have overwritten
+  the checkout's npm `node_modules`.
