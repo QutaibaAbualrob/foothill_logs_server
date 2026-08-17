@@ -1,0 +1,13 @@
+file,batch_size,runtime,framework,standard,logs_per_second,errors,ingest_p50_ms,ingest_p95_ms,aggregate_p95_ms,started_at
+fb-b200-express-run1.json,200,bun 1.3.14,express,verified,30472.1,0,612.2,900.0,191.7,2026-08-17T20:54:45.922Z
+fb-b200-express-run2.json,200,bun 1.3.14,express,verified,28363.8,0,644.3,969.8,320.8,2026-08-17T20:57:19.579Z
+fb-b200-express-run3.json,200,bun 1.3.14,express,verified,28978.7,0,643.2,914.0,189.6,2026-08-17T20:59:59.469Z
+fb-b200-fastify-run1.json,200,bun 1.3.14,fastify,verified,29184.8,0,632.0,895.7,216.8,2026-08-17T20:56:04.718Z
+fb-b200-fastify-run2.json,200,bun 1.3.14,fastify,verified,29942.5,0,613.0,874.5,171.1,2026-08-17T20:58:36.286Z
+fb-b200-fastify-run3.json,200,bun 1.3.14,fastify,verified,28228.3,0,662.2,917.4,272.6,2026-08-17T21:01:26.066Z
+fb-b33-express-run1.json,33,bun 1.3.14,express,verified,18833.4,0,156.6,271.7,156.6,2026-08-17T20:46:34.942Z
+fb-b33-express-run2.json,33,bun 1.3.14,express,verified,18662.1,0,160.4,294.6,105.7,2026-08-17T20:49:05.009Z
+fb-b33-express-run3.json,33,bun 1.3.14,express,verified,17587.1,0,171.2,297.7,160.5,2026-08-17T20:51:51.589Z
+fb-b33-fastify-run1.json,33,bun 1.3.14,fastify,verified,19880,0,148.8,239.1,82.4,2026-08-17T20:47:54.463Z
+fb-b33-fastify-run2.json,33,bun 1.3.14,fastify,verified,20020,0,148.4,244.2,83.1,2026-08-17T20:50:32.022Z
+fb-b33-fastify-run3.json,33,bun 1.3.14,fastify,verified,20383.5,0,146.1,250.0,72.7,2026-08-17T20:53:03.368Z
