@@ -1,104 +1,120 @@
 # Express on Node vs Express on Bun — measured runs, 2026-08-17
 
-The runtime swap measured alone. `runs.csv` indexes every run: 4 rows, two
-interleaved pairs, on native Linux under the shipped caps (api 0.5 CPU / 256 MB,
-postgres 1.0 CPU / 1 GB). Branch: `perf/bun-runtime`, whose `src/` is byte
-identical to `main` — the only variable is the runtime.
+The runtime swap measured alone, to the seven requirements in `agents.md`
+§"The measurement standard". `runs.csv` indexes every run: 16 rows, of which
+**12 are evidence** (two batch sizes × three interleaved pairs) and 4 are an
+earlier **screen** kept for the record. The `standard` column says which.
 
-This is **not** the framework comparison. Express is on both sides of every pair
-here; for Express vs Fastify see `bench/results/2026-08-17-fastify-vs-express/`.
+Native Linux, shipped caps: api 0.5 CPU / 256 MB, postgres 1.0 CPU / 1 GB.
+Branch `perf/bun-runtime`, whose `src/` is byte identical to `main` — the only
+variable is the runtime. Express is on both sides of every pair here; for
+Express vs Fastify see `bench/results/2026-08-17-fastify-vs-express/`.
 
 ## Headline
 
-| | Express + Node 22.18 | Express + Bun 1.3.14 |
-| --- | ---: | ---: |
-| Ingest, batch 33 | 8,638.9 / 9,075.9 logs/s | **20,215.9 / 20,875.0 logs/s** |
-| Ratio, per pair | — | **2.34× / 2.30×** |
-| Ingest p50 / p95 | 345/597, 325/531 ms | **147/257, 140/239 ms** |
-| Aggregate p95 during ingestion | 173 / 236 ms | **112 / 74 ms** |
-| Errors | 0 | 0 |
-| api CPU, avg of 33 samples | 45.8% / 45.7% of a 50% cap | 45.4% / 45.2% |
-| postgres CPU, avg | 35.0% / 36.5% of a 100% cap | **61.2% / 60.7%** |
+Median of three per cell, with the full spread. Zero errors in all 12 runs.
 
-Both sides sat at the same 0.5-CPU ceiling. Bun did roughly 2.3× the work inside
-the identical CPU budget, which is what moves the constraint: on Node,
-PostgreSQL kept ~65% of its CPU in reserve while the application saturated its
-cap; on Bun, PostgreSQL climbs to ~61% average and touches its own ceiling
-(103.9% max of a 100% cap). **The Bun figure is therefore already partly
-database-limited — it is a floor on the runtime's headroom, not a ceiling.**
+| | batch 200 | batch 33 |
+| --- | --- | --- |
+| Node 22.18 | 14,389 logs/s (13,689–14,681, 6.9%) | 8,217 logs/s (8,101–8,709, 7.4%) |
+| Bun 1.3.14 | **28,345 logs/s** (28,139–31,105, 10.5%) | **18,648 logs/s** (18,327–18,697, 2.0%) |
+| Multiple, medians | **1.97×** | **2.27×** |
+| Multiple, per pair | 2.27 / 1.97 / 1.92 | 2.15 / 2.30 / 2.23 |
 
-Batch 33 is the point where `docs/test_results/batch33-and-cpu-profile.md` §1
-showed the application container to be the constraint, which is why the swap
-pays here. It does not follow that it pays as much at batch 200, where the
-framework and runtime share of on-CPU time is far smaller.
+**Against the 15,000 logs/s target, with aggregate p95 under the 1 s
+requirement:**
 
-## Protocol
+| | clears 15,000 logs/s? | aggregate p95 |
+| --- | --- | --- |
+| Node, batch 200 | **no** — 13,689 / 14,389 / 14,681 | 589 / 498 / 505 ms |
+| Bun, batch 200 | **yes** — 31,105 / 28,345 / 28,139 | 284 / 166 / 179 ms |
+| Node, batch 33 | no — 8,101–8,709 | 197 / 343 / 202 ms |
+| Bun, batch 33 | **yes** — 18,327–18,697 | 77 / 84 / 83 ms |
 
-Per run, exactly as the recorded batch-33 point was taken: `docker compose
-down -v` (clean volume), `up -d --build --wait`, then 60 s at concurrency 96,
-batch 33, with `scripts/capture-resources.mjs` sampling both containers, then
-the full drain walk. One run at a time; the two stacks were never up together.
+Bun clears the target at both batch sizes with aggregate p95 an order of
+magnitude inside the 1 s requirement. Node clears it at neither, missing by
+2–9% at batch 200.
 
-Both traps recorded in `2026-08-17-fastify-vs-express/README.md` are respected:
+## The compression across the curve, and the confound in it
 
-1. **Interleave and repeat.** These four runs are one session, interleaved
-   node → bun → node → bun, clean volume each. The two Node runs landed 5% apart
-   (8,639 / 9,076) and the two Bun runs 3% apart (20,216 / 20,875) — the gap
-   between runtimes is an order of magnitude larger than the spread within
-   either.
+The standard predicts a swap flatters itself at batch 33 (HTTP layer 19.3% of
+on-CPU time) and compresses at batch 200 (7.5%) — as the framework swap did,
++30.6% → +7.7%, a 4× compression. **The runtime swap compresses far less:
+2.27× → 1.97×, a factor of 1.15.**
 
-   *Amended 2026-08-17:* this section originally cited that file's "host drifts
-   ~29% between sessions" claim, which has since been **withdrawn**. That claim
-   came from comparing an Express run against a Fastify run under the same
-   label — trap 2, in other words. Measured noise is ~6% within a session and
-   ~11% across. The two Node + Express runs recorded here (8,639 / 9,076) are
-   part of what corroborated the 8,170 baseline and exposed the error.
+That number is a **lower bound**, because of what the CPU columns show:
 
-   The requirement to interleave and repeat is unchanged; the reason is ordering
-   effects, growing table size and mislabelled builds rather than an unstable
-   machine.
-2. **A label is not proof of what is running.** Each run asked the container
-   what it was before measuring, recorded in the run log as `PROOF pid1`:
-   `node dist/src/index.js` versus `bun run src/index.ts`, with
-   `ls node_modules | grep -xE "fastify|express"` returning `express` on all
-   four. All rows are `validity: verified`.
+| | api CPU avg (50% cap) | postgres CPU avg / max (100% cap) | limited by |
+| --- | --- | --- | --- |
+| Node, batch 200 | 44.8 / 45.1 / 44.4 | 38.5–42.9 / 64.6–87.5 | application |
+| Bun, batch 200 | **33.1–34.6** | 61.3–67.7 / **84.3–100.0** | **database** |
+| Node, batch 33 | 44.0–44.4 | 35.9–38.1 / 54.4–81.9 | application |
+| Bun, batch 33 | 43.9–44.5 | 61.3–63.3 / 87.5–94.2 | application (postgres close behind) |
 
-Two runs per side is below the three the protocol asks for. The direction is not
-in doubt at this margin — a 130% gap against 3–5% within-runtime spread survives
-the ~6% session noise comfortably — but treat **2.3×** as the measured range's
-midpoint rather than a settled constant.
+At batch 200 the Bun application container **does not reach its own cap** — it
+idles a third of it — while PostgreSQL touches 100%. Those three cells are
+database-limited and are marked so in `runs.csv`. Bun is not being measured
+there; PostgreSQL is. The true runtime multiple at batch 200 is therefore ≥1.97×,
+and the apparent compression from 2.27× is at least partly the database ceiling
+arriving rather than the HTTP layer's share shrinking.
 
-## The drain numbers are not a like-for-like comparison
+The batch-33 cells are the honest application-limited comparison: both runtimes
+sit at ~44% of a 50% cap, and Bun does 2.27× the work inside it.
 
-| | Node | Bun |
-| --- | ---: | ---: |
-| Rows walked | 526,185 / 553,476 | 1,214,301 / 1,260,501 |
-| pages/s | 43.4 / 43.2 | 47.6 / 47.6 |
-| page p50 / p95 | 16.8/59.4, 17.4/57.6 ms | 15.8/47.3, 15.8/48.5 ms |
+## Compliance with the seven requirements
 
-Each drain walks whatever that run ingested, so Bun's walk covered ~2.3× the
-rows — a bigger table and a bigger index (192–199 MB vs 83–87 MB). Bun being
-faster per page *on more data* is a real signal, but a clean read-path
-comparison needs both sides walking an identically sized dataset, and that run
-has not been done. Correctness held everywhere: 0 duplicates, 0 ordering
-violations, true end reached, unique ids matching `count(*)` in all four runs.
+| # | Requirement | How |
+| --- | --- | --- |
+| 1 | Interleaved | node → bun → node → bun → node → bun, at each batch size |
+| 2 | Three repeats per side | 3 per cell, 12 runs total |
+| 3 | Clean volume per run | `down -v` before each; `rows_before` is 0 in all 12 rows |
+| 4 | Build verified inside the container | `proof_pid1` per row: `node dist/src/index.js` vs `bun run src/index.ts`; `node_modules` grep returned `express` on all 12 |
+| 5 | One variable | runtime only; `git diff main -- src/` is empty on this branch |
+| 6 | One stack up at a time | verified per run — `other_containers_up` is `none` in all 12. The orphaned `logs-fastify` postgres from a deleted directory was removed first, and the neighbouring `server_loger` stack was stopped for the campaign |
+| 7 | Spread, errors, rows, both CPUs | above and in `runs.csv` |
 
-The ≤8 ms p95 page target is missed by both runtimes, as it is on `main`.
+Batch 200 was run first and completed before batch 33, as the brief required.
 
-## What is not here
+## The four earlier runs are a screen, not evidence
 
-The raw harness output (16 files: result JSONs, resource CSVs, capture
-summaries) is written to `bench/raw/`, which is gitignored. Per the rule in
-`2026-08-17-fastify-vs-express/README.md`, it is copied to the private analysis
-repository — location and rules in `plan/internal/SANITIZATION.md` §7 — in the
-same session it was measured, because it is not reproducible from this
-repository afterwards.
+Rows with `standard: screen` are two batch-33 pairs taken earlier the same day.
+They met requirements 1, 3, 4, 5 and 6 but only **two** repeats per side, so they
+cannot separate the effect from noise on their own and their numbers must not
+appear in a headline. They read 2.34× and 2.30× at batch 33 against this
+campaign's 2.27× — consistent, which is a corroboration and not a substitute.
+
+Their absolute values ran higher on both sides (Node 8,639/9,076 vs 8,101–8,709;
+Bun 20,216/20,875 vs 18,327–18,697) — a session offset within the ~11% figure the
+calibration note gives for across-session comparison, and exactly why the
+standard forbids comparing a number to one from an earlier session. Everything in
+the Headline above is from a single continuous session.
+
+*Amendment carried forward:* an earlier version of this file cited a "host drifts
+~29% between sessions" claim from `2026-08-17-fastify-vs-express/README.md`, which
+has since been **withdrawn** — it came from comparing an Express run against a
+Fastify run under the same label. Measured noise is ~6% within a session and ~11%
+across. The requirement to interleave and repeat is unchanged; the reason is
+ordering effects, growing table size and mislabelled builds rather than an
+unstable machine.
 
 ## Not measured
 
-- Batch 200 and the rest of the batch curve on Bun. Only batch 33 was run, and
-  it is the point most favourable to a runtime swap.
-- Read-path profile on either runtime — still the open item in `agents.md`.
-- Fastify + Bun, the combination this branch exists to enable.
-- Sustained runs longer than 60 s, and memory behaviour under them. Peak RSS was
-  not captured; the sampled values stayed well inside the 256 MB cap.
+- **Batch 50 and 500.** The curve has four points on `main`; two were measured
+  here.
+- **The drain walk was not part of this campaign.** It is not in the required
+  report, and each walk covers whatever its own run ingested, so the sides are
+  never comparable without an equal-sized dataset. The four screen runs include
+  drains; treat them as screens too.
+- **Fastify + Bun**, the combination this branch exists to enable. Both halves
+  are now measured alone; the combination is not.
+- **Peak RSS.** Sampled values stayed well inside the 256 MB cap on both
+  runtimes; no peak was captured.
+- **Anything above 60 s.** All runs are 60 s at concurrency 96.
+
+## Raw output
+
+The 36 raw files for these 12 runs (result JSONs, resource CSVs, capture
+summaries) are written to `bench/raw/`, which is gitignored. They are committed
+and pushed to the private analysis repository — location and rules in
+`plan/internal/SANITIZATION.md` §7 — in the session they were measured, because
+they are not reproducible from this repository afterwards.

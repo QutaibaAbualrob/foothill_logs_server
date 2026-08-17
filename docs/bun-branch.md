@@ -84,6 +84,16 @@ The startup path also works unchanged: migrations applied from `src/db/migration
 (read relative to cwd, which the image preserves), partitions created, the
 retention pass ran, and the service logged `{"event":"ready"}`.
 
+**Re-run in full immediately before the §5 campaign**, at the commit that carries
+it, with the build verified from inside the container first — proof
+`bun run src/index.ts`, `express`, `bun --version` 1.3.14. All four green again:
+`bun test` 32/32 with `TEST_DATABASE_URL` set so both integration files executed
+rather than self-skipped, smoke pass, reliability 73/73, drill PASS with SIGTERM
+exit 0 and 377,800 of 377,800 acknowledged rows persisted. A runtime swap can
+break `pg` compatibility, SIGTERM handling and error-body shapes in ways no
+throughput number would reveal — the framework swap returned 500 instead of 400
+on malformed JSON and only the 73-check reliability gate caught it.
+
 **Stability observation, not a benchmark:** that SIGTERM section pushed 410,800
 rows through the Bun container in ~15 s at 32 workers × batch 200 with no OOM
 kill and no restart. `docker stats` shortly after the run — not during it —
@@ -187,52 +197,45 @@ name in the summary). Also runtime-agnostic; the Fastify branch needs it too.
 
 ## 5. The measurement
 
-Taken after the branch was built, once the host was free. Full record and the
-run index: `bench/results/2026-08-17-bun-vs-express/`.
+Run to the seven requirements in `agents.md` §"The measurement standard".
+Full record: `bench/results/2026-08-17-bun-vs-express/` (README + `runs.csv`).
+12 runs, two batch sizes × three interleaved pairs, clean volume each, one stack
+up at a time, build verified from inside the container every run, **zero errors
+throughout**. Median of three per cell, spread in brackets:
 
-Two interleaved pairs, batch 33, 60 s, concurrency 96, clean volume per run,
-one stack up at a time, both containers sampled throughout:
+| | batch 200 | batch 33 |
+| --- | --- | --- |
+| Node 22.18 | 14,389 logs/s (13,689–14,681, 6.9%) | 8,217 logs/s (8,101–8,709, 7.4%) |
+| Bun 1.3.14 | **28,345 logs/s** (28,139–31,105, 10.5%) | **18,648 logs/s** (18,327–18,697, 2.0%) |
+| Multiple | **1.97×** | **2.27×** |
+| Ingest p95 | 1,711–1,791 ms → **879–912 ms** | 559–640 ms → **289–298 ms** |
+| Aggregate p95 | 498–589 ms → **166–284 ms** | 197–343 ms → **77–84 ms** |
 
-| | Express + Node 22.18 | Express + Bun 1.3.14 |
-| --- | ---: | ---: |
-| Ingest | 8,638.9 / 9,075.9 logs/s | **20,215.9 / 20,875.0 logs/s** (2.34× / 2.30×) |
-| Ingest p50 / p95 | 345/597, 325/531 ms | **147/257, 140/239 ms** |
-| Aggregate p95 during ingestion | 173 / 236 ms | **112 / 74 ms** |
-| Errors | 0 | 0 |
-| api CPU avg | 45.8% / 45.7% of a 50% cap | 45.4% / 45.2% |
-| postgres CPU avg | 35.0% / 36.5% of a 100% cap | 61.2% / 60.7% |
+**Against the target:** Bun clears 15,000 logs/s at both batch sizes with
+aggregate p95 far inside the 1 s requirement. Node clears it at neither — batch
+200 lands at 13,689 / 14,389 / 14,681, missing by 2–9%.
 
-The api container sat at the same ceiling on both sides, so the gain is work
-done per CPU-second, not a cap that failed to apply — `NanoCpus` was confirmed
-at 500000000 and each run asked the container what it was running before
-measuring (`node dist/src/index.js` vs `bun run src/index.ts`, `express` in
-`node_modules` on all four).
+**The batch-200 cells are database-limited on Bun and marked so.** The api
+container idles a third of its cap there (33.1–34.6% of 50%) while PostgreSQL
+reaches 84.3–100% of its own. Those cells measure PostgreSQL, not the runtime,
+so 1.97× is a **lower bound** and the compression from 2.27× is at least partly
+the database ceiling arriving rather than the HTTP layer's share shrinking. The
+batch-33 cells are the clean application-limited comparison: both runtimes at
+~44% of a 50% cap, Bun doing 2.27× the work inside it.
 
-Read it with three limits attached:
+For contrast, the framework swap compressed 4× across the same two points
+(+30.6% → +7.7%). The runtime swap compresses by a factor of 1.15.
 
-- **PostgreSQL is now near its own cap** under Bun — 61% average, 103.9% max of
-  a 100% cap — so the Bun figure is already partly database-limited. It is a
-  floor on the runtime's headroom rather than a ceiling.
-- **Batch 33 is the friendliest point for this swap.** It is where the recorded
-  profile put the application at 96% of its cap. Batch 200, where the framework
-  and runtime share of on-CPU time is far smaller, was not run.
-- **Two runs per side**, where the measurement protocol in
-  `bench/results/2026-08-17-fastify-vs-express/README.md` asks for three. Within
-  each runtime the spread was 5% (Node) and 3% (Bun), against a 130% gap between
-  them, so the direction is not in doubt; the exact multiple is not settled.
-  (That file's "host drift" framing was withdrawn on 2026-08-17 — it was itself
-  a mislabelled-build artefact. Session noise is ~6%, which this margin clears
-  easily. The interleave-and-repeat requirement is unchanged.)
+Two earlier batch-33 pairs (2.34× and 2.30×) are kept in `runs.csv` as
+`standard: screen` — two repeats per side cannot separate an effect from noise,
+so they corroborate but do not count. Their absolute values sit ~10% above this
+campaign's, a session offset within the ~11% across-session figure, which is why
+nothing here is compared to an earlier session.
 
-The drain walks are **not** like-for-like — each covers whatever its own run
-ingested, so Bun's walked 2.3× the rows against a 2.3× larger index. Bun was
-faster per page anyway (p95 47.3/48.5 ms vs 59.4/57.6 ms), but an equal-sized
-dataset is needed before that is a read-path claim. Correctness held in all four
-walks: 0 duplicates, 0 ordering violations, true end reached, unique ids equal
-to `count(*)`. Both runtimes miss the ≤8 ms page p95 target, as `main` does.
-
-The read/drain profile that `agents.md` §Next item 1 asks for is still not done,
-on either runtime. This branch does not close it.
+Not measured: batch 50 and 500; the drain walk (not in the required report, and
+never like-for-like since each walk covers whatever its own run ingested);
+peak RSS; anything longer than 60 s; and Fastify + Bun, the combination this
+branch exists to enable.
 
 ## 6. Merge notes for combining with `perf/fastify-node`
 
@@ -283,6 +286,12 @@ Built to keep the merge boring:
   §3, which was taken after the load rather than during it. Corrected the
   `bun.lock` regeneration command in §6, which as written would have overwritten
   the checkout's npm `node_modules`.
+- 2026-08-17 — re-measured to the seven requirements in `agents.md` §"The
+  measurement standard". §5 replaced: 12 runs, batch 200 first then batch 33,
+  three interleaved pairs each, exclusive host. 1.97× at batch 200 (a lower
+  bound — those Bun cells are database-limited) and 2.27× at batch 33. The
+  earlier two-pair result is demoted to `standard: screen` in `runs.csv` and is
+  no longer in any headline. Gates re-run on Bun at this commit, all green.
 - 2026-08-17 — measured, §5 rewritten from "not measured" to the result: two
   interleaved batch-33 pairs, Express on Bun at 2.3× Express on Node under the
   same 0.5-CPU cap. Record in `bench/results/2026-08-17-bun-vs-express/`. Fixed

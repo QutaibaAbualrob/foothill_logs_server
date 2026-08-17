@@ -1,5 +1,17 @@
-pair,label,runtime,framework,started_utc,logs_per_s,errors,ingest_p50_ms,ingest_p95_ms,ingest_p99_ms,aggregate_p95_ms,drain_rows,drain_pages_per_s,page_p50_ms,page_p95_ms,duplicates,order_violations,reached_end,api_cpu_avg_pct,api_cpu_max_pct,pg_cpu_avg_pct,pg_cpu_max_pct,index_size,validity
-1,node,Node 22.18,express,2026-08-17T19:15:25.908Z,8638.9,0,345.4,597.1,681.6,173.2,526185,43.4,16.824,59.366,0,0,True,45.8,53.6,35.0,88.7,83 MB,verified
-1,bun,Bun 1.3.14,express,2026-08-17T19:17:17.322Z,20215.9,0,146.7,256.7,372.4,112.3,1214301,47.6,15.779,47.273,0,0,True,45.2,52.5,61.2,99.0,192 MB,verified
-2,node2,Node 22.18,express,2026-08-17T19:22:47.692Z,9075.9,0,324.8,531.2,681.6,236.2,553476,43.2,17.413,57.564,0,0,True,45.7,53.3,36.5,80.0,87 MB,verified
-2,bun2,Bun 1.3.14,express,2026-08-17T19:24:18.996Z,20875,0,140.4,238.8,349.3,73.6,1260501,47.6,15.848,48.546,0,0,True,45.4,53.5,60.7,103.9,199 MB,verified
+standard,label,batch,runtime,framework,proof_pid1,started_utc,logs_per_s,errors,ingest_p50_ms,ingest_p95_ms,ingest_p99_ms,aggregate_p95_ms,aggregate_samples,rows_before,rows_after,api_cpu_avg_pct,api_cpu_max_pct,pg_cpu_avg_pct,pg_cpu_max_pct,index_size,limited_by,other_containers_up
+evidence,b200-node-1,200,Node 22.18,express,node dist/src/index.js,2026-08-17T20:12:43.500Z,13689,0,1398.7,1791.0,1883.6,589.4,46,0,828000,44.8,54.9,38.5,74.6,124 MB,application,none
+evidence,b200-bun-1,200,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:13:59.621Z,31104.6,0,586.3,899.5,1456.4,283.5,56,0,1882000,34.6,50.0,67.7,95.5,283 MB,database,none
+evidence,b200-node-2,200,Node 22.18,express,node dist/src/index.js,2026-08-17T20:15:44.075Z,14389,0,1297.9,1789.3,1894.1,497.7,48,0,876800,45.1,53.2,41.9,64.6,131 MB,application,none
+evidence,b200-bun-2,200,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:17:00.266Z,28344.7,0,650.2,878.7,1092.4,165.9,57,0,1711400,33.4,46.1,61.7,100.0,258 MB,database,none
+evidence,b200-node-3,200,Node 22.18,express,node dist/src/index.js,2026-08-17T20:18:36.012Z,14681.3,0,1276.8,1710.6,1900.2,504.5,47,0,895200,44.4,53.8,42.9,87.5,134 MB,application,none
+evidence,b200-bun-3,200,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:20:10.723Z,28138.8,0,667.5,912.2,1193.5,178.5,57,0,1695200,33.1,47.4,61.3,84.3,255 MB,database,none
+evidence,b33-node-1,33,Node 22.18,express,node dist/src/index.js,2026-08-17T20:21:48.993Z,8709,0,346.8,558.7,710.3,197.1,56,0,529551,44.4,53.5,36.1,81.9,84 MB,application,none
+evidence,b33-bun-1,33,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:23:04.902Z,18696.5,0,155.6,289.4,368.9,76.6,59,0,1135497,44.5,53.4,63.0,94.2,180 MB,application,none
+evidence,b33-node-2,33,Node 22.18,express,node dist/src/index.js,2026-08-17T20:24:28.414Z,8101.3,0,384.6,609.4,779.4,342.8,55,0,489423,44.0,51.9,35.9,54.4,77 MB,application,none
+evidence,b33-bun-2,33,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:25:56.718Z,18647.8,0,154.0,297.7,483.9,83.9,58,0,1120614,43.9,52.0,61.3,88.2,177 MB,application,none
+evidence,b33-node-3,33,Node 22.18,express,node dist/src/index.js,2026-08-17T20:27:20.485Z,8216.5,0,368.6,639.7,734.4,202.4,56,0,498366,44.2,53.9,38.1,61.4,78 MB,application,none
+evidence,b33-bun-3,33,Bun 1.3.14,express,bun run src/index.ts,2026-08-17T20:28:37.504Z,18327.3,0,159.2,290.7,401.8,83.2,59,0,1115136,44.2,52.9,63.3,87.5,177 MB,application,none
+screen,node,33,Node 22.18,express,"recorded in run log, not per-row",2026-08-17T19:15:25.908Z,8638.9,0,345.4,597.1,681.6,173.2,,0,526185,45.8,53.6,35.0,88.7,83 MB,,server_loger (idle)
+screen,bun,33,Bun 1.3.14,express,"recorded in run log, not per-row",2026-08-17T19:17:17.322Z,20215.9,0,146.7,256.7,372.4,112.3,,0,1214301,45.2,52.5,61.2,99.0,192 MB,,server_loger (idle)
+screen,node2,33,Node 22.18,express,"recorded in run log, not per-row",2026-08-17T19:22:47.692Z,9075.9,0,324.8,531.2,681.6,236.2,,0,553476,45.7,53.3,36.5,80.0,87 MB,,server_loger (idle)
+screen,bun2,33,Bun 1.3.14,express,"recorded in run log, not per-row",2026-08-17T19:24:18.996Z,20875.0,0,140.4,238.8,349.3,73.6,,0,1260501,45.4,53.5,60.7,103.9,199 MB,,server_loger (idle)
