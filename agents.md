@@ -76,18 +76,27 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 - [x] **Fastify on Node, on a branch** — 2026-08-17, branch `perf/fastify-node`
   at `68766fe`. Green on every gate (32/32 tests, smoke, 73/73 reliability,
-  failure drill) and **~7.7% faster than Express** at batch 200, winning all
-  eight paired runs across three independently taken A/B sets. Aggregate p95
-  improves too (554 ms against 631 ms). **Not merged — that call is the
-  owner's.** Evidence: `docs/test_results/fastify-branch-results.md`.
+  failure drill), **~7.7% faster than Express at batch 200** — winning all eight
+  paired runs across three independently taken A/B sets — and **~25–35% faster
+  at batch 33**. Aggregate p95 improves too (554 ms against 631 ms). **Not
+  merged — that call is the owner's.** Evidence:
+  `docs/test_results/fastify-branch-results.md`.
+
+  The gain grows as client batches shrink, tracking the HTTP layer's share of
+  on-CPU time (19.3% at batch 33, 7.5% at batch 200). The service does not
+  choose the batch size, so the small-batch case is not hypothetical.
 
   The branch declares no response schemas, which is where Fastify's
   serialisation advantage lives, so this is its floor rather than its ceiling.
 
   **Protocol lessons — both cost real time, both will recur:**
-  1. This host drifts tens of percent between sessions. Never compare against a
-     baseline measured earlier. Interleave the branches, repeat at least three
-     times, clean volume per run, report the spread.
+  1. Interleave the branches, repeat at least three times, clean volume per run,
+     report the spread. Measured noise is **~6%** for a repeated build within a
+     session and **~11%** across sessions — enough to bury a 10% effect in a
+     single pair. (An earlier version of this file blamed "tens of percent of
+     host drift". That was wrong: it came from comparing two different builds
+     under the same label, i.e. trap 2 below. Corrected 2026-08-17 after an
+     independent session supplied matching Express baselines.)
   2. **Verify from inside the container which build is running** — do not trust
      a branch name. A commit intended for this branch landed on `main` while a
      second worktree was in play, which silently inverted an entire A/B and

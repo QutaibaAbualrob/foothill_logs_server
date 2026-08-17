@@ -3,9 +3,13 @@
 **Branch:** `perf/fastify-node` at `68766fe` ("Swap the HTTP layer from Express to Fastify")
 **Baseline:** `main` at `1bfb036`
 **Date:** 2026-08-17
-**Verdict: Fastify is ~8% faster** at batch 200 and wins every paired run, with
-all gates green. It meets the "commit to main only if the measurements show it's
-worth it" bar. The merge decision is the owner's.
+**Verdict: Fastify is ~8% faster at batch 200 and ~25–35% faster at batch 33**,
+winning every paired run, with all gates green. It meets the "commit to main
+only if the measurements show it's worth it" bar. The merge decision is the
+owner's.
+
+The gain grows as client batches shrink, because that is when the HTTP layer is
+a larger share of the work (§3.5). The service does not choose the batch size.
 
 Read §3.1 before trusting any number in this file: three earlier readings of this
 same experiment were wrong, for three different reasons, and the corrections are
@@ -60,10 +64,23 @@ This experiment produced a "+39%", a "−11.8%" and a "+13.4%" before it produce
 a trustworthy number. All three failures are worth keeping, because each has a
 different cause and each would recur.
 
-1. **+39% — cross-session baseline.** The branch was compared against a `main`
-   run measured earlier the same day. Re-measuring `main` in the same session
-   gave 10,532 logs/s at batch 33 where the morning run gave 8,170: the host
-   drifts by **~29%** between sessions. Retracted.
+1. **+39% — weak comparison, but retracted for the wrong reason.** The branch
+   was compared against a `main` run measured earlier the same day, on a single
+   non-interleaved pair. That is genuinely weak evidence and the figure should
+   not have been quoted with confidence.
+
+   The *explanation* given at the time was wrong, though. I re-measured "main",
+   got 10,532 logs/s at batch 33 against the morning's 8,170, and concluded the
+   host drifts ~29% between sessions. It does not. That re-measurement was
+   itself Fastify — it ran while the Fastify commit sat on `main` (failure 2
+   below) — so I compared Fastify against Express and called the difference
+   drift.
+
+   An independent Bun-branch session later measured Node + Express at batch 33
+   twice, at **8,638.9 and 9,075.9 logs/s**, corroborating the 8,170 baseline.
+   Three Express runs across two sessions span about 11%; same-build repeats
+   within a session vary about 6%. **There is no tens-of-percent drift on this
+   host.** See §3.5 for what the batch-33 numbers actually say.
 
 2. **−11.8% — swapped labels.** The A/B loop checked out `main` and
    `perf/fastify-node` by name. But the Fastify commit had landed on **`main`**,
@@ -85,6 +102,15 @@ The lesson is procedural and now sits in `agents.md`: on this host, interleave
 the branches, repeat at least three times, use a clean volume per run, report the
 spread — and **verify from inside the container which build is running**, rather
 than trusting a branch name.
+
+**Calibration of the noise, corrected 2026-08-17.** Same build repeated within a
+session varies about **6%**; across sessions about **11%** (three Express
+batch-33 runs: 8,170 mine, 8,639 and 9,076 from an independent Bun-branch
+session). The protocol is therefore not defence against a wildly unstable
+machine — it is defence against **ordering effects, growing table size and
+mislabelled builds**, which is what actually produced a +39% and a −11.8%
+reading from the same two builds. A single non-interleaved pair still cannot
+resolve a 10% effect, because 6–11% of noise sits underneath it.
 
 ### 3.2 The trustworthy A/B
 
@@ -127,6 +153,30 @@ A warm-up-controlled variant — fresh container, one 30 s pass discarded, secon
 So across three independently taken sets, Fastify wins **all eight paired runs**,
 by between 5.7% and 13.4%. The point estimate is sensitive to run conditions; the
 direction is not.
+
+### 3.5 Batch 33 — the gain is much larger at small batches
+
+Correcting §3.1 item 1 leaves a real result behind it. Pooling every batch-33
+run, including two Node + Express runs taken independently on the Bun branch:
+
+| Build | Runs | logs/s |
+| --- | --- | ---: |
+| Express | mine, then two from the Bun-branch session | 8,170 / 8,639 / 9,076 |
+| Fastify | two runs | 11,366 / 10,532 |
+
+**Fastify is roughly 25–35% faster at batch 33**, against 7.7% at batch 200.
+Weaker evidence than §3.2 — these were not interleaved — but the direction is
+consistent across five runs and two sessions.
+
+This is exactly what the profile predicted and I failed to notice at the time:
+Express + router + `_http_*` is **19.3% of on-CPU at batch 33 and 7.5% at batch
+200** (`batch33-and-cpu-profile.md` §3). The framework's benefit tracks the
+framework's share of CPU at each batch size. The two measurements agree; the
+"drift" story was noise invented to explain a gap that had a mechanical
+explanation sitting in the profile.
+
+Practical consequence: **the smaller the client's batches, the more the
+framework matters** — and the service does not choose the batch size.
 
 ### 3.4 Read path — not measured
 
