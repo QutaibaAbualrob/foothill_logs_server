@@ -67,7 +67,7 @@ Taken on this branch, 2026-08-17, against `logs-bun` on port 8090.
 | Gate | Result |
 | --- | --- |
 | `npm run typecheck` | clean (Node/tsc, unchanged tsconfig) |
-| `npm test` | **32/32** |
+| `npm test` (on Node — see §3.1 for the Bun runner) | **32/32** |
 | `npm run smoke` (G1 contract) | pass — `{"status":"ok","accepted":5,"paginated":5,"aggregateCount":5}` |
 | `npm run reliability` (G2) | **73/73**, 0 failures |
 | `npm run drill` | **PASS**, every row |
@@ -92,7 +92,47 @@ that as a floor rather than a headroom claim. It says the runtime is stable
 under real ingest load at the shipped caps. It says nothing about throughput —
 the machine was not exclusive (see §5).
 
-### 3.1 Error mapping, checked by hand — and a gap in the gates
+### 3.1 The suite on Bun's own runner, integration tests included
+
+The `npm test` row above runs the suite on **Node** (`tsx --test`) — it proves
+the source is unchanged, not that the tests pass under Bun. Run on Bun's own
+runner instead, `bun test` executes the `node:test` files unmodified:
+
+| Runner | Result |
+| --- | --- |
+| `bun test` (Bun 1.3.14) | **32 pass, 0 fail**, 6 files |
+| `tsx --test` (Node 22.18) | **32 pass, 0 fail** |
+
+Diffed by test name, the two runners ran the identical set — no test is
+silently skipped on either side. Worth knowing what the number contains: 30 are
+unit cases and 2 are the integration files, which Node's runner counts as one
+passing test each even when they skip themselves for want of a database.
+
+These runs did **not** skip them. Both integration files were given a real
+database, so the retention pass and the aggregate edge-slice paths executed for
+real on both runtimes and passed. `plan/HANDOFF.md` §2 item 3 records the
+retention test as never having been executed; it has now run, on Bun and on
+Node, against PostgreSQL 16.4.
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml
+export COMPOSE_PROJECT_NAME=logs-bun
+docker compose up -d postgres --wait
+docker compose exec -T postgres psql -U logger -d logs -c "CREATE DATABASE logs_test;"
+
+# a scratch database, and the compose network, so the driver reaches postgres
+# by service name exactly as the application does
+docker run --rm --network logs-bun_default -v "$PWD":/app -w /app \
+  -u "$(id -u):$(id -g)" -e HOME=/tmp \
+  -e TEST_DATABASE_URL=postgresql://logger:logger@postgres:5432/logs_test \
+  oven/bun:1.3.14-slim bun test
+```
+
+The tests are mounted from the checkout rather than baked into an image:
+`.dockerignore` excludes `test/`, and it should stay excluded — the runtime
+image has no business carrying them.
+
+### 3.2 Error mapping, checked by hand — and a gap in the gates
 
 The malformed-JSON and oversized-body branches in `app.ts` read `error.type`
 off `body-parser`'s error objects, which is the kind of thing a runtime swap
@@ -216,3 +256,7 @@ Built to keep the merge boring:
   §3, which was taken after the load rather than during it. Corrected the
   `bun.lock` regeneration command in §6, which as written would have overwritten
   the checkout's npm `node_modules`.
+- 2026-08-17 — ran the suite on Bun's own runner (§3.1): 32 pass / 0 fail,
+  name-for-name identical to the Node run. Both integration files executed
+  against a real database on both runtimes rather than skipping, which is the
+  first recorded execution of the retention test.
