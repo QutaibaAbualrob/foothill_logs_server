@@ -124,9 +124,20 @@ crash shutdown, "starting up", saturation and pool timeouts as 503 + `Retry-Afte
   is what a reviewer will run. Verify G0 on a machine where 8080 is free before
   claiming it.
 
-- **The migration is checksummed.** Editing `src/db/migrations/001_init.sql`
-  makes startup fail with `applied migration 001_init.sql was modified` against
-  an existing volume. Reset with `docker compose down -v`.
+- **Migrations are checksummed.** Editing any applied file under
+  `src/db/migrations/` — `001_init.sql` or `002_attributes_gin.sql` — makes
+  startup fail with `applied migration <name> was modified` against an existing
+  volume. Reset with `docker compose down -v`. Add a new numbered file and
+  append it to `MIGRATIONS` in `src/db/migrate.ts` rather than editing an
+  applied one.
+
+- **Index names beginning `logs_attr` are a reserved namespace.**
+  `ensureHotAttributeIndexes` drops every index on `logs` matching its prefix
+  that is not currently configured, which is how a de-configured hot key gets
+  cleaned up. The `LIKE` pattern escapes its underscores precisely so the sweep
+  cannot claim an index that merely *starts* with those letters — before that
+  fix it silently dropped `logs_attributes_gin_idx` on every startup. Do not
+  name an unrelated index `logs_attr…`.
 
 - **`CURSOR_SECRET` now defaults to a random value per process start** if unset,
   per `01-ARCHITECTURE.md` §9. Compose sets a fixed one so cursors survive a

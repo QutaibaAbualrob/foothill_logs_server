@@ -64,15 +64,29 @@ read-after-write probes — because the specification requires queries to stay
 usable *during* ingestion (§24), so measuring ingestion alone measures the wrong
 thing.
 
+**Probe at ingestion rate, not on a timer.** A read-after-write probe issued
+after *every* accepted `POST` is the shape a client that confirms its own writes
+produces, and it is the only rate that exposes the interaction between the read
+and write paths. Sampling visibility every few seconds instead looks like a
+reasonable economy and is not: it under-represents attribute-query pressure by
+orders of magnitude, and it hides three effects this project measured only after
+switching to per-`POST` probing — a GIN pending list that every read must scan,
+the `limit + 1` probe's full scan on a hit, and read queries starving the writer
+for the single PostgreSQL CPU. An ingest-only or sparsely-probed number will
+make almost any write-path change look better than it is.
+
 ### Load-generator payload shape
 
 Fix these and keep them fixed, so results stay comparable:
 
 - batch size per request (swept once in E4, then frozen and reported);
 - ~5 services, 4 levels, message lengths in a realistic spread;
-- 3–6 attributes per entry, mixing string, number, and boolean values;
-- a small fraction of entries carrying a high-selectivity correlation key, to
-  exercise the hot-attribute index;
+- 3–6 attributes per entry, mixing string, number, and boolean values — the
+  number and boolean values are not decoration, they are what exercises the
+  multi-type containment terms in the attribute predicate;
+- a fraction of entries carrying a unique high-selectivity correlation key,
+  queried back per the probing rule above; this is what exercises both the
+  attribute GIN index and the hot-attribute index;
 - a small fraction of deliberately invalid entries, to keep the partial-
   acceptance path on the hot path where it belongs.
 
@@ -123,13 +137,34 @@ Run in this order. Record every row, including regressions.
 | E1 | Row-to-JSON construction site | driver objects+stringify / PostgreSQL per-row JSON / PostgreSQL whole array | page p95, application CPU, PostgreSQL CPU, RSS |
 | E2 | Direct response write | framework serialiser vs prepared buffer | page p95, application CPU |
 | E3 | Bounded read-ahead | `READAHEAD_PAGES` 0 / 1 / 2 | drain pages/s, RSS ceiling, G1 still green |
-| E4 | Batch shape | target rows, byte budget, delay, write concurrency | sustained throughput **and** PostgreSQL CPU headroom |
+| E4 | Batch shape | ~~target rows, byte budget~~, idle delay, write concurrency | sustained throughput **and** PostgreSQL CPU headroom |
 | E5 | Pool layout | reserved split vs larger shared | completed drain **and** accepted throughput together |
 | E6 | Bulk mechanism | COPY vs UNNEST INSERT | throughput, p95, CPU, memory |
 | E7 | Durability profile | `SYNC_COMMIT` off / on | throughput and p95, reported per profile |
 | E8 | Hot-attribute index | present / absent | probe latency gain vs measured ingestion cost |
-| E9 | Optional attribute GIN | present / absent | `attr.*` query gain vs write amplification — expected to lose |
+| E9 | Optional attribute GIN | present / absent | `attr.*` query gain vs write amplification — **expectation was wrong, see below** |
 | E10 | Retention under load | idle / active during ingestion | throughput dip, lock waits, stale aggregates |
+| E11 | GIN `fastupdate` | on / off | mixed-workload throughput, **not** ingest-only throughput |
+
+**E4 is narrower than it was.** A flush now takes the whole queue, so there is
+no target-row or byte budget to sweep: those knobs were removed after capping a
+flush below the waiting backlog proved to be the dominant throughput limit. The
+idle coalescing delay and write concurrency remain.
+
+**E9's stated expectation was wrong, and the way it was wrong is the lesson.**
+The prediction that a general attribute GIN would lose came from reasoning about
+write amplification without measuring either side. Both halves were off: the
+write cost was ~4.5% of throughput rather than prohibitive, and the read side
+was far more expensive than "a scan on a rare filter" implies, because the
+`limit + 1` page probe pays a full scan on a **hit** as well as a miss. Do not
+carry an "expected to lose" into the result table; run the row.
+
+**E11 exists because E9 alone would have measured the wrong thing.** A GIN
+index's `fastupdate` pending list is nearly free on an ingest-only benchmark and
+expensive on a mixed one, since every read scans the pending list. Measured
+ingest-only, `fastupdate = on` looks fine; measured with reads, it cost more
+than half the achievable throughput. Any GIN experiment must be run under the
+mixed workload below.
 
 ### Result table format
 

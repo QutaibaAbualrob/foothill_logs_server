@@ -88,17 +88,14 @@ startup error, never silently replaced by a default.
 | `RETENTION_DAYS` | `30` | How long logs are kept |
 | `RETENTION_INTERVAL_MS` | `3600000` | Cadence of retention passes (1 hour) |
 | `RETENTION_BATCH_ROWS` | `5000` | Rows per boundary-sweep `DELETE` batch |
-| `BATCH_TARGET_ROWS` | `2000` | Queued rows that trigger a group-commit flush |
-| `BATCH_MAX_ROWS` | `5000` | Hard per-flush row cap for one transaction |
-| `BATCH_TARGET_BYTES` | `2097152` | Queued bytes that trigger a flush (2 MiB) |
-| `BATCH_DELAY_MS` | `5` | Maximum wait before flushing a partial batch |
+| `BATCH_DELAY_MS` | `5` | How long an idle writer waits to gather companions for a lone request. Rows arriving while a flush runs never wait on this — they leave in the next flush, which always takes the whole queue |
 | `QUEUE_MAX_ROWS` | `50000` | Backpressure cap on queued rows — exceeding it returns `503` + `Retry-After` |
 | `QUEUE_MAX_BYTES` | `33554432` | Backpressure cap on queued bytes (32 MiB) |
 | `WRITE_POOL_SIZE` | `2` | Connections reserved for the ingest transactions |
 | `QUERY_POOL_SIZE` | `8` | Connections for read traffic |
 | `DB_CONNECT_TIMEOUT_MS` | `2000` | Connection acquisition timeout |
-| `QUERY_STATEMENT_TIMEOUT_MS` | `10000` | Server-side `statement_timeout` on the query pool, so an abandoned HTTP request cannot pin a backend forever |
-| `HOT_ATTRIBUTE_KEYS` | `trace_id` | Comma-separated attribute keys that get a dedicated partial, ordered index (see [Indexes](#indexes)). Empty string ships no attribute indexes at all |
+| `QUERY_STATEMENT_TIMEOUT_MS` | `10000` in code, `5000` in compose | Server-side `statement_timeout` on the query pool, so an abandoned HTTP request cannot pin a backend forever. Attribute filters are index-backed, so this is a backstop for the remaining scan-shaped query, `q` |
+| `HOT_ATTRIBUTE_KEYS` | `trace_id` in code, `` (empty) in compose | Comma-separated attribute keys that get a dedicated partial, ordered index (see [Indexes](#indexes)). Empty string ships no attribute indexes at all |
 | `CURSOR_SECRET` | random per process start if unset | HMAC key that signs pagination cursors. Compose pins a development value so cursors stay valid across container restarts; unset, cursors minted before a restart are rejected |
 | `SHUTDOWN_TIMEOUT_MS` | `15000` | Graceful-shutdown budget: drain in-flight batches, then exit |
 
@@ -304,6 +301,16 @@ after its transaction commits — makes "accepted" and "persisted and queryable"
 the same event. Freshness holds by construction, with no background
 reconciliation.
 
+**How large is a batch?** However large the backlog is. A flush takes the
+entire queue rather than a configured number of rows, because its cost —
+connection checkout, `BEGIN`, `SET LOCAL`, the rollup upsert, `COMMIT` — is
+fixed per transaction, not per row. Capping a batch below what is already
+waiting pays that cost again for no reason and leaves the remainder to wait for
+another round trip, which is how a queue turns a throughput shortfall into a
+latency collapse. `QUEUE_MAX_ROWS` and `QUEUE_MAX_BYTES` are what bound a
+single transaction, and they are enforced at admission, so backpressure still
+surfaces as `503` + `Retry-After` rather than unbounded memory.
+
 **What a 200 means:** every accepted entry in the request is committed and
 immediately queryable. (The durability profile determines how crash-durable
 "committed" is — see [Durability](#durability).)
@@ -426,15 +433,46 @@ Serves: correlation-ID style lookups (`attr.trace_id=…`) that must also come
 back in cursor order — one equality probe, one index scan, no sort.
 
 Why partial and configurable: the index is created at startup from
-`HOT_ATTRIBUTE_KEYS` (default `trace_id`) rather than in the SQL migration,
-because *which* attribute deserves an index is a deployment decision, not a
-schema constant. The `WHERE attributes ? key` predicate means rows without the
-key are not indexed at all, so the write cost scales with how often the key
-actually appears, not with total ingest volume. Empty
-`HOT_ATTRIBUTE_KEYS` ships no attribute indexes at all. The planner only
+`HOT_ATTRIBUTE_KEYS` rather than in the SQL migration, because *which*
+attribute deserves an index is a deployment decision, not a schema constant.
+The `WHERE attributes ? key` predicate means rows without the key are not
+indexed at all, so the write cost scales with how often the key actually
+appears, not with total ingest volume. That cost is still real — a JSONB
+extraction and a scattered B-tree write for every row carrying the key — so
+compose ships `HOT_ATTRIBUTE_KEYS=` empty and adds no attribute index by
+default; turn one on where the read path actually filters on that key. The
+planner only
 considers this index when the configured key is emitted as a literal — which
 is safe because config validation restricts keys to the identifier character
 set; the compared *value* is always a bound parameter.
+
+### `logs_attributes_gin_idx` — `gin (attributes jsonb_path_ops)`, `fastupdate = off`
+
+Serves: an equality filter on *any* attribute key, without that key having to
+be configured in advance.
+
+Why it exists: without it, `attr.k=v` had no index to use and fell back to
+walking the table in cursor order. That is bounded only by the table size, and
+it is paid on a **hit** as much as a miss — a selective filter with a small
+limit finds its row immediately and then keeps scanning to decide whether a
+next page exists. Measured at 671k rows, one such lookup read every row in
+158 ms; with the index it is 0.4 ms.
+
+How the query reaches it: `jsonb_path_ops` answers containment only, so
+`buildPredicates` narrows with a containment disjunction and then rechecks the
+exact `->>` equality. Both halves are load-bearing — containment is *broader*
+than `->>` for numbers, because jsonb compares numerics rather than their text
+(`@> '{"k":1.0}'` matches a stored `1`, which `->>` renders as `'1'` and must
+not match a query for `'1.0'`), and it is *narrower* for whichever JSON type it
+names, which is why a filter value that could have been stored as a string, a
+number or a boolean gets one containment term per type.
+
+Ingestion cost: about 4.5% of throughput (16,525 vs 17,305 logs/s measured).
+`fastupdate = off` is what makes that trade work: left on, new entries queue in
+an unsorted pending list that *every* read has to scan end to end, so a
+read-after-write client pays for the writes it is racing. On the mixed
+workload that cost more than half the achievable throughput — 6.3k logs/s at
+83% database CPU with it on, 10.5k at 41% with it off.
 
 ### Rollup indexes
 
@@ -447,10 +485,17 @@ indexes.
 
 ### Deliberately not shipped
 
-- **A general GIN index on `attributes`.** It would tax *every* insert to
-  accelerate filters that are rare, and arbitrary `attr.<key>` equality is a
-  documented scan. The partial hot-key index is the deliberate compromise:
-  index the dimension you page by, not every dimension.
+- ~~**A general GIN index on `attributes`.**~~ **Reversed by measurement.**
+  The argument was that it would tax every insert to accelerate filters that
+  are rare, leaving arbitrary `attr.<key>` equality as a documented scan. Two
+  things were wrong with it. The scan is not rare when any client does
+  read-after-write, and it is not cheap on a hit either — the `limit + 1`
+  probe keeps scanning past the matched row to decide whether a next page
+  exists, so a lookup that returns one row still reads the whole table. And
+  the tax was assumed rather than measured: it is about 4.5% of ingest
+  throughput, against a 414× improvement on the lookup. It is now shipped as
+  `logs_attributes_gin_idx`, with `fastupdate = off`, which is where the real
+  cost of a GIN index on this workload turned out to live.
 - **`pg_trgm` on `message`.** `q` is a literal, case-insensitive substring
   match (`strpos`) — correct, parameterised, and wildcard-free. A trigram
   index would materially inflate an index footprint already measured at over
@@ -537,6 +582,16 @@ database configuration.
 ---
 
 ## Performance
+
+> **These Phase 5 figures predate the current write and attribute-query
+> configuration.** Since they were captured, the flush policy changed from a
+> 2,000-row cap to a full-queue drain, `wal_compression` was dropped, the
+> `trace_id` hot-attribute index was removed from the shipped compose, and a
+> `jsonb_path_ops` GIN index on `attributes` was added. They are retained as an
+> accurate record of the configuration they measured; they are no longer a
+> description of what ships. The [reconfiguration results](#reconfiguration-results)
+> below carry the current numbers, and are held to a lower evidentiary standard —
+> read both sections' caveats before quoting either.
 
 **The figures below are transcribed from `bench/results/final.md`
 (Phase 5).** The shipped scripts emit the same kinds of metrics, but the exact
@@ -657,6 +712,62 @@ background reconciliation to fall behind, but that design argument is not a
 numeric performance measurement. The freshness gate therefore remains
 unverified pending a captured probe run.
 
+### Reconfiguration results
+
+**Evidentiary standard.** These runs used ad-hoc harnesses rather than the
+committed `bench/` scripts, and no raw capture was retained under `bench/raw/`.
+The load generator ran on the same host as the containers and competed with
+them for CPU, so **the deltas are the result; the absolute throughput figures
+are soft** and read low against a generator on separate hardware. Treat this
+section as a change record, not as a replacement for a Phase 5-grade capture.
+Re-running the committed protocol in `plan/05-BENCHMARK-PROTOCOL.md` is
+outstanding work.
+
+**What changed.** Four things, in descending order of measured effect: the
+batcher now drains its whole queue per flush instead of capping at 2,000 rows;
+`attributes` gained a `jsonb_path_ops` GIN index with `fastupdate = off`; the
+`trace_id` hot-attribute index was removed from the shipped compose; and
+`wal_compression` was dropped.
+
+**Ingestion**, 30 s, 96 workers, batch 50, capped compose stack:
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Ingestion throughput | 3,400 logs/s | **13,694 logs/s** (17,305 on a warm database) |
+| PostgreSQL CPU, average | ~78% of 1 CPU | **~33%** |
+| Application CPU, average | ~10% of 0.5 CPU | **~46%** |
+| Errors | 0 | 0 |
+
+The CPU inversion is the substantive result: PostgreSQL was the constraint and
+now has headroom, which is the read-headroom rule (`search_rnd/RND.md` §12.7)
+finally holding under ingestion. The application is now the binding constraint
+against its own 0.5-CPU cap.
+
+**Mixed workload** — the same ingestion with a read-after-write attribute
+lookup issued after *every* accepted `POST`, which is the shape any client that
+confirms its own writes produces:
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Throughput under 1:1 read-after-write | 2,431 logs/s | **10,062 logs/s** |
+| Lookups that found the row | 0.4% | **100%** |
+| HTTP error rate | 20% | **0%** |
+| PostgreSQL CPU, average | ~98% | **~40%** |
+
+**Attribute lookup**, `EXPLAIN (ANALYZE)` at 671k rows: **158 ms → 0.4 ms**.
+The pre-index cost was paid on a *hit* as much as a miss, because the
+`limit + 1` page probe keeps scanning past the matched row to decide whether a
+next page exists — see [Indexes](#indexes).
+
+**Cost of the GIN index**, isolated: 16,525 vs 17,305 logs/s, about 4.5% of
+ingestion throughput. `fastupdate = off` is what keeps that trade favourable;
+left at the default, the mixed workload ran at 6.3k logs/s and 83% database CPU
+instead of 10.5k at 41%.
+
+**Unchanged by this work.** The page-latency and drain figures above were not
+re-measured; nothing here targets the app-side materialisation cost that
+dominates them, and the open bottlenecks (5) and (6) stand as recorded.
+
 ---
 
 ## Testing and CI
@@ -720,22 +831,34 @@ unverified pending a captured probe run.
   two headers and samples from multiple attempts; the final ingestion, drain,
   and E1+E2 console summaries are not present in `bench/raw/`. Headline figures
   should be treated as run records until a clean recapture is retained.
-- **Freshness is unmeasured.** Commit-before-acknowledgement makes immediate
-  visibility the expected behavior, but no final read-after-write delay
-  distribution was captured, so the numeric freshness gate is unverified.
+- **Freshness is measured as a rate, not a distribution.** The reconfiguration
+  run issued a read-after-write lookup after every accepted `POST` and found
+  the row **100%** of the time, which is the first direct evidence for
+  commit-before-acknowledgement. It is still a success rate, not the delay
+  distribution the freshness gate asks for, so that gate remains open.
 - **Unaligned aggregate ranges read raw edge slices.** Correct and exact, but
   a range whose edges fall inside minutes costs two raw slice queries on top
   of the rollup interior; `q`/`attr.*` aggregate queries scan raw rows by
   construction (those dimensions are not in the rollup).
-- **Only configured hot attribute keys are indexed.** `attr.<key>` filters on
-  any other key are scans, and `q` is a literal `strpos` scan with no trigram
-  support — deliberate (see [Indexes](#indexes)).
+- **`q` is the one remaining scan-shaped filter.** It is a literal `strpos`
+  substring match with no trigram support — deliberate (see
+  [Indexes](#indexes)). `attr.<key>` equality is no longer in this category:
+  the `jsonb_path_ops` GIN index answers any key, and a hot key additionally
+  buys sort-free cursor order. The compose `QUERY_STATEMENT_TIMEOUT_MS=5000` is
+  the backstop for a `q` scan on a large table.
+- **The application container is now the binding constraint.** With PostgreSQL
+  at ~33% under ingestion and the application at ~46% of its 0.5-CPU cap,
+  further ingestion throughput has to come from app-side cost — JSON parsing,
+  validation, and response serialisation — not from the database. This inverts
+  the constraint the earlier tuning was written against.
 - **Index footprint remains material.** The preliminary ~600k-row snapshot was
   110 MB of indexes in 203 MB total; the legacy 3 M-row summary records 514 MB
   of indexes in 1,495 MB total (34%). The old capture script did not traverse
   the partition tree, so neither historical ratio is independently
   reconstructible from the shipped raw evidence. New captures emit exact byte
-  counts across every partition.
+  counts across every partition. Both historical snapshots also predate
+  `logs_attributes_gin_idx`, which adds a fifth index per partition; its
+  storage cost has not been captured, only its ~4.5% ingestion cost.
 - **Default durability profile is not crash-durable.** With `SYNC_COMMIT=off`
   (the default), an unclean PostgreSQL host failure can lose a window of
   acknowledged writes; a `200` remains a committed-and-queryable guarantee.
@@ -762,10 +885,10 @@ at their defaults.
 | Feature | Default | Enable / disable |
 | --- | --- | --- |
 | Strict durability | **Off** | `SYNC_COMMIT=on` in the compose environment (or the deployment env) makes `200` crash-durable; `SYNC_COMMIT=off` (default) is the throughput profile. Both are contract-compliant |
-| Hot attribute indexes | **`trace_id`** | `HOT_ATTRIBUTE_KEYS=trace_id,request_id` adds a partial ordered index per key; `HOT_ATTRIBUTE_KEYS=` (empty) disables all attribute indexes and removes them at startup. Keys must match the identifier character set |
+| Hot attribute indexes | **None** (compose ships `HOT_ATTRIBUTE_KEYS=`) | `HOT_ATTRIBUTE_KEYS=trace_id,request_id` adds a partial ordered index per key; empty disables all attribute indexes and removes them at startup. Keys must match the identifier character set. Each key costs a JSONB extraction and a scattered B-tree write on every ingested row, so index a key only where reads actually filter on it |
 | Fixed cursor secret | **Development value in compose** | Compose sets `CURSOR_SECRET` so cursors survive restarts; unset it to mint a random secret per start (cursors invalidated across restarts). A production deployment should set its own |
 | Host port mapping | **`8080`** | `HOST_PORT=<port> docker compose up` publishes the service on another host port |
 
 The default configuration — group commit with `synchronous_commit = off`,
-30-day retention, `trace_id` hot index — is the plain core service with all
+30-day retention, no attribute indexes — is the plain core service with all
 four endpoints unauthenticated.

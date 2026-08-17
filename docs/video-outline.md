@@ -243,6 +243,9 @@ below; substitute your own run's dataset):
   cursor carries the DB-rendered timestamp, inspect the batcher metrics via
   `/metrics`.
 - **Extend a feature** (spec §44): "Add an index for a new attribute key" —
-  set `HOT_ATTRIBUTE_KEYS=trace_id,request_id`, restart; the partial ordered
-  index is created at startup, no schema migration needed, and the filter
-  `attr.request_id=…` is served from it. Removing the key drops the index.
+  every key is already answerable from the `attributes` containment GIN index,
+  so the extension is about *cursor order*: set
+  `HOT_ATTRIBUTE_KEYS=trace_id,request_id` and restart, and each key gets a
+  partial ordered index created at startup with no schema migration, so
+  `attr.request_id=…` returns a page from one index scan with no sort node.
+  Removing the key drops its index again.

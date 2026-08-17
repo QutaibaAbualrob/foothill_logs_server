@@ -50,9 +50,9 @@ Working code already exists under `workshop/`:
 | --- | --- |
 | `config.ts`, `types.ts`, `errors.ts` | Present, strict env parsing |
 | `db/pools.ts` | Present — split write / query / maintenance pools |
-| `db/migrate.ts` + `001_init.sql` | Present — checksummed migrations, monthly partitions, rollup table, marker paging index |
+| `db/migrate.ts` + `001_init.sql`, `002_attributes_gin.sql` | Present — checksummed migrations, monthly partitions, rollup table, paging index, attribute containment GIN index |
 | `ingest/validation.ts` | Present — per-entry validation, null-byte rejection |
-| `ingest/batcher.ts` | Present — bounded cross-request queue, group commit, byte + row caps |
+| `ingest/batcher.ts` | Present — bounded cross-request queue, group commit; the queue caps bound a flush, which always drains the whole queue |
 | `ingest/repository.ts` | Present — COPY CSV in 64 KiB chunks + transactional minute-rollup upsert |
 | `query/cursor.ts` | Present — signed, filter-bound, microsecond-precision cursor |
 | `query/parser.ts`, `builder.ts`, `repository.ts` | Present — strict parsing, parameterised predicates |

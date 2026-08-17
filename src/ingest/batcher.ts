@@ -54,15 +54,12 @@ export class WriteBatcher {
     this.queuedRows += logs.length;
     this.queuedBytes += bytes;
 
-    if (
-      this.queuedRows >= this.config.batchTargetRows ||
-      this.queuedBytes >= this.config.batchTargetBytes
-    ) {
-      this.clearTimer();
-      this.pump();
-    } else {
-      this.ensureTimer();
-    }
+    // No size threshold triggers a flush. A flush already in progress absorbs
+    // everything that arrives while it runs — ensureTimer is a no-op then, and
+    // the flush re-pumps whatever accumulated as soon as it commits. The timer
+    // therefore only covers the idle case, where a lone request would otherwise
+    // wait for a companion that never comes.
+    this.ensureTimer();
     return result;
   }
 
@@ -112,26 +109,22 @@ export class WriteBatcher {
     void this.flush(pending);
   }
 
+  /**
+   * Takes the whole queue. A flush pays a fixed cost — connection checkout,
+   * BEGIN, SET LOCAL, the rollup upsert, COMMIT — that is independent of how
+   * many rows it carries, so capping the batch below what is already waiting
+   * spends that cost again for no reason and leaves the rest of the backlog to
+   * wait for the next round trip. Admission control in submit() is what bounds
+   * memory: queueMaxRows and queueMaxBytes cap what can ever be waiting here,
+   * and csvChunks streams the batch out in fixed-size pieces rather than
+   * materialising it.
+   */
   private takeBatch(): PendingRequest[] {
-    const pending: PendingRequest[] = [];
+    const pending = this.queue.splice(0, this.queue.length);
     let rows = 0;
-    let bytes = 0;
-    while (this.queue.length > 0) {
-      const next = this.queue[0];
-      if (next === undefined) break;
-      const wouldExceed =
-        pending.length > 0 &&
-        (rows + next.logs.length > this.config.batchMaxRows ||
-          bytes + next.bytes > this.config.batchTargetBytes);
-      if (wouldExceed) break;
-      this.queue.shift();
-      pending.push(next);
-      rows += next.logs.length;
-      bytes += next.bytes;
-      if (rows >= this.config.batchTargetRows || bytes >= this.config.batchTargetBytes) break;
-    }
-    this.queuedRows -= rows;
-    this.queuedBytes -= bytes;
+    for (const request of pending) rows += request.logs.length;
+    this.queuedRows = 0;
+    this.queuedBytes = 0;
     this.inFlightRows = rows;
     return pending;
   }
@@ -154,10 +147,9 @@ export class WriteBatcher {
     } finally {
       this.inFlightRows = 0;
       this.flushing = false;
-      if (this.queue.length > 0) {
-        if (this.closing || this.queuedRows >= this.config.batchTargetRows) this.pump();
-        else this.ensureTimer();
-      }
+      // Everything that arrived during this flush goes out in the next one,
+      // with no delay: the writer is free and the backlog is already known.
+      if (this.queue.length > 0) this.pump();
       this.finishClose();
     }
   }

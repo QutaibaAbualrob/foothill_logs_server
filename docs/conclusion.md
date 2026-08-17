@@ -117,3 +117,84 @@ property checks.
    recoverable. Do not rewrite history implicitly.
 6. Treat the published performance figures as recorded rather than
    independently verified until those raw captures exist.
+
+---
+
+# Addendum — write-path and attribute-query reconfiguration
+
+**Date:** 2026-08-17
+
+**Applies to:** changes made after `bd876ee`. Everything above this line remains
+the verification record for `7bd338e` and is not restated or revised here; the
+configuration it measured is no longer the configuration that ships.
+
+## What changed
+
+1. **The batcher drains its whole queue per flush.** It previously stopped at
+   `BATCH_TARGET_ROWS` (2,000) even with a much deeper backlog waiting, paying
+   the fixed per-transaction cost — connection checkout, `BEGIN`, `SET LOCAL`,
+   rollup upsert, `COMMIT` — once per 2,000 rows. `BATCH_TARGET_ROWS`,
+   `BATCH_MAX_ROWS` and `BATCH_TARGET_BYTES` were removed; `QUEUE_MAX_ROWS` and
+   `QUEUE_MAX_BYTES` are now what bound a single transaction, enforced at
+   admission so backpressure still surfaces as `503` + `Retry-After`.
+2. **`attributes` gained a `jsonb_path_ops` GIN index** with `fastupdate = off`
+   (`002_attributes_gin.sql`). `buildPredicates` narrows with a containment
+   disjunction and rechecks the exact `->>` equality, which preserves the
+   previous semantics exactly.
+3. **The `trace_id` hot-attribute index left the shipped compose**
+   (`HOT_ATTRIBUTE_KEYS=`), and **`wal_compression` was dropped**.
+4. **Two defects were found and fixed while doing the above** — see below.
+
+## Defects found
+
+- **`ensureHotAttributeIndexes` dropped indexes it did not own.** Its sweep
+  matched `indexname LIKE 'logs_attr_%'`, and `_` is a single-character
+  wildcard in SQL `LIKE`, so the pattern also claimed every index merely
+  *beginning* with those letters. It silently dropped `logs_attributes_gin_idx`
+  on every startup, which presented as the new index never existing. The
+  underscores in the prefix are now escaped.
+- **An out-of-range numeric attribute filter returned 500.** The containment
+  term is only emitted for a value that could have been stored, guarded on
+  `Number.isFinite`. That guard is insufficient: `1e-999999` parses to a finite
+  `0` in JavaScript while PostgreSQL rejects the jsonb literal with "value
+  overflows numeric format", turning a well-formed query into a 500. The guard
+  now also rejects a literal that underflowed to zero. Regression tests cover
+  both directions.
+
+## Verification performed
+
+| Area | Result | Evidence |
+| --- | --- | --- |
+| Typecheck and tests | Pass | Typecheck exited 0; 26/26 passed with PostgreSQL, integration tests included |
+| Contract and reliability scripts | Pass | Smoke passed; reliability passed 73/73 |
+| Failure drill | Pass | `db +243000 = accepted 243000`; graceful `SIGTERM` drain; no container restart; final health 200 |
+| Attribute semantics, live HTTP | Pass | `attr.retry=1` matches a stored number `1`; `attr.retry=1.0`, `attr.ratio=1.50` and `attr.cached=false` correctly return nothing; `attr.k=1e±999999` returns 200 |
+| Hot-key sweep after the escape fix | Pass | Configuring `trace_id` creates its index and leaves the GIN index; clearing it drops only its own |
+| Migration on a clean volume | Pass | `logs_attributes_gin_idx` present with `{fastupdate=off}`; a partition created later inherits the option |
+| Benchmark provenance | **Fail** | Ad-hoc harnesses, no raw capture retained under `bench/raw/`, load generator co-resident with the containers |
+
+## Evidence limits
+
+- The throughput figures in the README's *Reconfiguration results* were taken
+  with ad-hoc scripts, not the committed `bench/` protocol, and nothing was
+  retained under `bench/raw/`. The load generator competed with the containers
+  for host CPU. **The deltas are the result; the absolute figures are soft.**
+- The read-after-write result is a success *rate* (100% of probes found their
+  row), not the delay distribution the freshness gate asks for. That gate stays
+  open.
+- Page latency, drain rate, and the storage snapshot were **not** re-measured.
+  The added GIN index changes the index footprint and nothing here re-captured
+  it.
+
+## Required follow-up
+
+1. Re-run the committed protocol in `plan/05-BENCHMARK-PROTOCOL.md` against
+   this configuration, with unique run names and retained raw output, so the
+   reconfiguration figures reach the same standard as the Phase 5 ones.
+2. Re-capture the storage snapshot; `logs_attributes_gin_idx` adds a fifth
+   index per partition whose size has never been measured.
+3. Re-run the 3 M-row drain. Items 1, 2 and 4–6 of the original follow-up list
+   above are unaffected by this work and still stand.
+4. Profile the application container. It is now the binding constraint at ~46%
+   of its 0.5-CPU cap while PostgreSQL sits at ~33%, which inverts the
+   assumption the earlier tuning was written against.

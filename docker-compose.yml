@@ -24,8 +24,6 @@ services:
       - -c
       - max_wal_size=2GB
       - -c
-      - wal_compression=on
-      - -c
       - jit=off
       - -c
       - random_page_cost=1.1
@@ -52,13 +50,19 @@ services:
       # at startup and cursors minted before a restart are rejected.
       CURSOR_SECRET: local-development-cursor-key
       # Attribute keys that get a dedicated partial ordered index. Empty ships
-      # none; see README "Indexes" for the measured write cost.
-      HOT_ATTRIBUTE_KEYS: trace_id
+      # none; see README "Indexes" for the measured write cost. Every indexed
+      # key costs a JSONB extraction and a scattered B-tree write on every
+      # ingested row, so a key is only worth indexing if reads actually filter
+      # on it.
+      HOT_ATTRIBUTE_KEYS: ""
       RETENTION_DAYS: "30"
       WRITE_POOL_SIZE: "2"
       QUERY_POOL_SIZE: "8"
-      BATCH_TARGET_ROWS: "2000"
-      BATCH_MAX_ROWS: "5000"
+      # Attribute filters are index-backed (see migration 002), so this is a
+      # backstop rather than load-bearing. It stays below the code default
+      # because a `q` substring search is still a scan, and one of those should
+      # not be able to hold a backend for ten seconds.
+      QUERY_STATEMENT_TIMEOUT_MS: "5000"
       BATCH_DELAY_MS: "5"
       QUEUE_MAX_ROWS: "50000"
       NODE_OPTIONS: --max-old-space-size=192

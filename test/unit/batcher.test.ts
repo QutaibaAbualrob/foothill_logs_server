@@ -40,9 +40,6 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     retentionDays: 30,
     retentionIntervalMs: 3600000,
     retentionBatchRows: 5000,
-    batchTargetRows: 2,
-    batchMaxRows: 5,
-    batchTargetBytes: 10000,
     batchDelayMs: 2,
     queueMaxRows: 10,
     queueMaxBytes: 10000,
@@ -73,10 +70,38 @@ test("batcher coalesces requests and resolves only after repository completion",
   await batcher.close();
 });
 
+test("batcher drains the whole backlog into one flush", async () => {
+  const repository = new FakeRepository();
+  let release = (): void => undefined;
+  repository.block = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const batcher = new WriteBatcher(repository, config({ queueMaxRows: 100 }));
+  const first = batcher.submit([log], 100);
+  // Let the idle timer fire, so the first flush is in flight and blocked.
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(repository.batches, [1]);
+
+  // Everything that arrives while that flush is blocked must leave in a single
+  // transaction once it commits, however many requests contributed to it.
+  const queued = [
+    batcher.submit([log, log], 200),
+    batcher.submit([log], 100),
+    batcher.submit([log, log, log], 300),
+  ];
+  release();
+
+  await Promise.all([first, ...queued]);
+  assert.deepEqual(repository.batches, [1, 6]);
+  assert.equal(batcher.metrics.committedRows, 7);
+  assert.equal(batcher.metrics.flushes, 2);
+  await batcher.close();
+});
+
 test("batcher rejects work beyond its bounded queue", async () => {
   const repository = new FakeRepository();
   repository.block = new Promise<void>(() => undefined);
-  const batcher = new WriteBatcher(repository, config({ queueMaxRows: 2, batchTargetRows: 1 }));
+  const batcher = new WriteBatcher(repository, config({ queueMaxRows: 2 }));
   void batcher.submit([log], 100).catch(() => undefined);
   await new Promise<void>((resolve) => setImmediate(resolve));
   void batcher.submit([log], 100).catch(() => undefined);

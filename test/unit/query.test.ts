@@ -124,8 +124,48 @@ test("a configured hot attribute key emits the partial-index predicate", () => {
 test("an unconfigured attribute key stays fully parameterised", () => {
   const built = buildPredicates({ attributes: { trace_id: "abc" } }, undefined, []);
   assert.doesNotMatch(built.sql, /'trace_id'/);
-  assert.match(built.sql, /\(attributes ->> \$1\) = \$2/);
-  assert.deepEqual(built.values, ["trace_id", "abc"]);
+  // Containment narrows using the GIN index; the exact predicate still decides.
+  assert.match(built.sql, /\(attributes @> \$1::jsonb\)/);
+  assert.match(built.sql, /\(attributes ->> \$2\) = \$3/);
+  assert.deepEqual(built.values, ['{"trace_id":"abc"}', "trace_id", "abc"]);
+});
+
+test("a numeric or boolean attribute filter probes every type it could be stored as", () => {
+  // `->>` flattens 1, "1" and true to text, so a text filter has to reach all
+  // of them through an index that only answers containment.
+  const numeric = buildPredicates({ attributes: { retry: "1" } }, undefined, []);
+  assert.match(numeric.sql, /\(attributes @> \$1::jsonb OR attributes @> \$2::jsonb\)/);
+  assert.deepEqual(numeric.values.slice(0, 2), ['{"retry":"1"}', '{"retry":1}']);
+
+  const boolean = buildPredicates({ attributes: { cached: "true" } }, undefined, []);
+  assert.deepEqual(boolean.values.slice(0, 2), ['{"cached":"true"}', '{"cached":true}']);
+
+  // A scale-carrying literal keeps its scale: jsonb numerics compare 1.0 = 1,
+  // so the exact `->>` recheck is what keeps '1.0' from matching a stored 1.
+  const scaled = buildPredicates({ attributes: { ratio: "1.0" } }, undefined, []);
+  assert.deepEqual(scaled.values.slice(0, 2), ['{"ratio":"1.0"}', '{"ratio":1.0}']);
+
+  // Anything that is not a JSON scalar literal gets the string term only.
+  const text = buildPredicates({ attributes: { marker: "01-abc" } }, undefined, []);
+  assert.match(text.sql, /\(attributes @> \$1::jsonb\)/);
+  assert.deepEqual(text.values, ['{"marker":"01-abc"}', "marker", "01-abc"]);
+});
+
+test("an out-of-range numeric filter never reaches PostgreSQL as a jsonb literal", () => {
+  // PostgreSQL rejects both of these with "value overflows numeric format".
+  // 1e999999 is easy — it parses to Infinity. 1e-999999 is the trap: it parses
+  // to a finite 0, so a plain isFinite guard would emit it and turn a
+  // well-formed query into a 500.
+  for (const value of ["1e999999", "1e-999999", "-1e-999999"]) {
+    const built = buildPredicates({ attributes: { k: value } }, undefined, []);
+    assert.deepEqual(built.values, [JSON.stringify({ k: value }), "k", value], value);
+  }
+
+  // A literal zero is a real value and keeps its numeric term.
+  for (const value of ["0", "-0", "0.00"]) {
+    const built = buildPredicates({ attributes: { k: value } }, undefined, []);
+    assert.deepEqual(built.values.slice(0, 2), [JSON.stringify({ k: value }), `{"k":${value}}`], value);
+  }
 });
 
 test("q is matched literally so wildcards cannot be injected through it", () => {

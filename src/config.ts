@@ -14,9 +14,6 @@ export interface AppConfig {
   readonly retentionDays: number;
   readonly retentionIntervalMs: number;
   readonly retentionBatchRows: number;
-  readonly batchTargetRows: number;
-  readonly batchMaxRows: number;
-  readonly batchTargetBytes: number;
   readonly batchDelayMs: number;
   readonly queueMaxRows: number;
   readonly queueMaxBytes: number;
@@ -72,8 +69,6 @@ function syncCommit(): SyncCommit {
 }
 
 export function loadConfig(): AppConfig {
-  const batchMaxRows = integer("BATCH_MAX_ROWS", 5_000, 1, 20_000);
-  const batchTargetRows = integer("BATCH_TARGET_ROWS", 2_000, 1, batchMaxRows);
   return {
     port: integer("PORT", 8080, 1, 65_535),
     databaseUrl:
@@ -87,11 +82,8 @@ export function loadConfig(): AppConfig {
     retentionDays: integer("RETENTION_DAYS", 30, 1, 3_650),
     retentionIntervalMs: integer("RETENTION_INTERVAL_MS", 3_600_000, 1_000, 86_400_000),
     retentionBatchRows: integer("RETENTION_BATCH_ROWS", 5_000, 100, 50_000),
-    batchTargetRows,
-    batchMaxRows,
-    batchTargetBytes: integer("BATCH_TARGET_BYTES", 2 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024),
     batchDelayMs: integer("BATCH_DELAY_MS", 5, 0, 100),
-    queueMaxRows: integer("QUEUE_MAX_ROWS", 50_000, batchMaxRows, 250_000),
+    queueMaxRows: integer("QUEUE_MAX_ROWS", 50_000, 1, 250_000),
     queueMaxBytes: integer("QUEUE_MAX_BYTES", 32 * 1024 * 1024, 1024 * 1024, 128 * 1024 * 1024),
     syncCommit: syncCommit(),
     shutdownTimeoutMs: integer("SHUTDOWN_TIMEOUT_MS", 15_000, 1_000, 120_000),

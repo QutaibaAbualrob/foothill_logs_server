@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Pool, PoolClient } from "pg";
 
 const MIGRATION_LOCK = "824631947205";
-const MIGRATIONS = ["001_init.sql"] as const;
+const MIGRATIONS = ["001_init.sql", "002_attributes_gin.sql"] as const;
 
 const HOT_ATTRIBUTE_INDEX_PREFIX = "logs_attr_";
 // Mirrors the validation in config.ts. Re-asserted here so that this module
@@ -83,10 +83,14 @@ export async function ensureHotAttributeIndexes(
     wanted.set(`${HOT_ATTRIBUTE_INDEX_PREFIX}${key.toLowerCase()}_page_idx`, key);
   }
 
+  // The underscores in the prefix are escaped: LIKE reads a bare _ as
+  // "any single character", so an unescaped 'logs_attr_%' also claims every
+  // index merely *beginning* with those letters — logs_attributes_gin_idx
+  // among them — and this sweep would drop indexes it does not own.
   const existing = await client.query<{ name: string }>(
     `SELECT indexname AS name FROM pg_indexes
      WHERE tablename = 'logs' AND indexname LIKE $1`,
-    [`${HOT_ATTRIBUTE_INDEX_PREFIX}%`],
+    [`${HOT_ATTRIBUTE_INDEX_PREFIX.replaceAll("_", "\\_")}%`],
   );
   for (const row of existing.rows) {
     if (!wanted.has(row.name)) await client.query(`DROP INDEX IF EXISTS "${row.name}"`);

@@ -80,9 +80,13 @@ CREATE TABLE logs (
   what makes the keyset walk cheap. It also gives determinism on tied
   timestamps, which the spec requires (§14).
 - **JSONB attributes, values kept in their original type.** Responses must return
-  `3` and `true`, not `"3"` and `"true"`. `attr.<key>` equality is a documented
-  text comparison via `attributes ->> key = $n`, which is correct and
-  parameterised with no general GIN index.
+  `3` and `true`, not `"3"` and `"true"`. `attr.<key>` equality stays a text
+  comparison via `attributes ->> key = $n`, which is what preserves those
+  semantics, but it is no longer answered by a scan: a `jsonb_path_ops` GIN
+  index (`logs_attributes_gin_idx`, `fastupdate = off`) selects candidates by
+  containment and the `->>` predicate rechecks them exactly. See the README's
+  Indexes section for the measured cost of that index and why the recheck
+  cannot be dropped.
 - **Range partitioning on `timestamp`, monthly.** Retention becomes a partition
   drop instead of a mass `DELETE` — no bloat, no long lock, no vacuum storm
   (spec §29). Monthly granularity keeps the partition count low so an unfiltered
@@ -287,8 +291,7 @@ is forbidden — it silently replaces `0`, and any garbage, with the default.
 | `DATABASE_URL` | compose-provided | No hardcoded credentials in the image |
 | `SYNC_COMMIT` | `off` | `on` selects the strictly crash-durable profile |
 | `RETENTION_DAYS` | `30` | Strict integer |
-| `BATCH_TARGET_ROWS` / `BATCH_MAX_ROWS` | `2000` / `5000` | Phase 4 sweep |
-| `BATCH_TARGET_BYTES` / `BATCH_DELAY_MS` | `2 MiB` / `5` | Phase 4 sweep |
+| `BATCH_DELAY_MS` | `5` | Idle coalescing wait only; a flush always takes the whole queue |
 | `QUEUE_MAX_ROWS` / `QUEUE_MAX_BYTES` | `50000` / `32 MiB` | Backpressure trigger |
 | `WRITE_POOL_SIZE` / `QUERY_POOL_SIZE` | `2` / `8` | Phase 4 sweep |
 | `HOT_ATTRIBUTE_KEYS` | one key | Empty string disables the partial index |
