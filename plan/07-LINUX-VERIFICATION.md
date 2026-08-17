@@ -1,5 +1,13 @@
 # Linux verification brief
 
+> **Answered — see [`docs/linux-verification-results.md`](../docs/linux-verification-results.md).**
+> Q1: the application container **is** the bottleneck; the hypothesis in §3 that
+> this was a WSL2 artifact is refuted. Q2: the batch-size curve does **not**
+> flatten. Q3: 14,320 logs/s sustained at batch 200 under the shipped caps.
+> The run also found a real defect — a database outage returning `500` instead
+> of `503`, since fixed — and confirmed the §5.1 container-name warning.
+> This brief is retained as the record of what was asked and why.
+
 **Branch:** `perf/write-path-and-attribute-index`
 **Base:** `main` at `bd876ee` (unchanged — this branch is additive and unmerged)
 **Written:** 2026-08-17

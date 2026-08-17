@@ -75,11 +75,25 @@ const UNAVAILABLE_SQL_STATES = new Set([
 const UNAVAILABLE_SYSTEM_ERRORS = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
-  "ENOTFOUND",
   "EHOSTUNREACH",
   "ENETUNREACH",
   "EPIPE",
   "ETIMEDOUT",
+  // Name resolution failures. The database host is a name, not an address, so
+  // every way that name can fail to resolve is the database being unreachable
+  // — never a bad request, and never an internal defect.
+  //
+  // All of these must be listed, because which one arrives depends on the
+  // resolver rather than on the fault. A container runtime whose embedded DNS
+  // answers NXDOMAIN for a stopped service surfaces ENOTFOUND, while one that
+  // answers SERVFAIL surfaces EAI_AGAIN for the identical outage. Listing only
+  // ENOTFOUND mapped that second case to 500 instead of 503 + Retry-After, and
+  // also stopped withDatabaseRetry from retrying a resolver blip at startup.
+  "ENOTFOUND", // EAI_NONAME — no such host
+  "EAI_AGAIN", // temporary resolver failure, e.g. SERVFAIL
+  "EAI_NONAME",
+  "EAI_NODATA",
+  "EAI_FAIL",
 ]);
 
 /**

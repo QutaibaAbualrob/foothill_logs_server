@@ -198,3 +198,73 @@ configuration it measured is no longer the configuration that ships.
 4. Profile the application container. It is now the binding constraint at ~46%
    of its 0.5-CPU cap while PostgreSQL sits at ~33%, which inverts the
    assumption the earlier tuning was written against.
+
+---
+
+# Addendum 2 — Linux verification
+
+**Date:** 2026-08-17
+
+**Full record:** `docs/linux-verification-results.md`. This section carries only
+the disposition; that file holds the measurements, provenance and evidence
+limits.
+
+The branch was re-measured on native Linux (Ubuntu 24.04, 16 CPU, Docker 29.7.2)
+under the shipped container caps, because every figure in Addendum 1 came from
+Docker Desktop on the WSL2 backend with a co-resident load generator.
+
+## What the run settled
+
+- **Both hypotheses put to it were refuted.** The application-CPU bottleneck is
+  *not* a WSL2 artifact — the `/metrics` ceiling reproduces at 934 req/s on
+  native Linux and scales 3.6× when only the CPU cap is raised. The batch-size
+  curve does *not* flatten; per-request cost belongs to the service.
+  Addendum 1's follow-up 4 therefore stands rather than being withdrawn.
+- **Freshness (original follow-up 4) can be closed.** 3,821 of 3,821 probes
+  found their row on the first attempt; delay p50 95 ms, p95 214 ms, p99 303 ms.
+  The delay distribution matches the probe's own latency, so there is no
+  visibility lag to measure.
+- **Storage (Addendum 1 follow-up 2) is captured.** The GIN index is 131 MB of
+  477 MB of index at 3.17 M rows. Addendum 1 said it "adds a fifth index per
+  partition"; that was wrong — the shipped configuration carries **three**.
+- **Correctness held throughout**, on both platforms: 26/26 tests with the
+  integration tests actually running, smoke, 73/73 reliability, graceful
+  `SIGTERM` drain with every acknowledged row persisted, and a full 3,165,800-row
+  walk returning exactly the trusted count with 0 duplicates and 0 ordering
+  violations.
+
+## Defect found, and fixed since
+
+A database outage returned **`500` instead of `503`** on `GET /logs`,
+`GET /logs/aggregate` and `POST /logs`, failing four failure-drill checks. The
+classifier in `src/db/pools.ts` listed `ENOTFOUND` but not `EAI_AGAIN`, and
+which of those arrives depends on the resolver rather than the fault. It also
+prevented `withDatabaseRetry` from retrying a resolver failure at startup.
+
+The whole `getaddrinfo` family is now classified as unavailable. The defect
+survived this long because the classifier — the single decision point behind
+every `503` — had **no unit test at all**; it now has one, covering both
+directions, including that a client's own error must never read as the database
+being down.
+
+## Still open
+
+1. **No client-side query deadline.** With PostgreSQL frozen rather than
+   stopped, a read hung past 20 s. `statement_timeout` is enforced by the
+   server, so a query already checked out on a frozen connection has no
+   client-side deadline to fall back on. Not covered by any test. Needs a
+   decision on `query_timeout` before it is worth implementing.
+2. **15,000 logs/s is not met under the shipped 0.5-CPU application cap**
+   (14,320 logs/s sustained on that host; 25,574 with the cap at 2.0 CPU).
+   A cap choice, not a defect — but a decision.
+3. **Query-performance targets are missed by a wider margin than recorded**:
+   drain 98.4 s at 32.2 pages/s against ≤30 s and ≥100 pages/s, page p95
+   87.3 ms against ≤8 ms. Slower hardware, and the drain is application-CPU-bound.
+4. **`scripts/failure-drill.sh` and `scripts/capture-resources.mjs` hardcode
+   `server_loger-*` container names** while the compose project name derives
+   from the directory. The run set `COMPOSE_PROJECT_NAME` explicitly; without
+   it the drill would have produced a confident, meaningless pass. Worth a
+   top-level `name:` in `docker-compose.yml`.
+5. **No committed harness probes at ingestion rate**, so the mixed-workload and
+   freshness figures cannot be reproduced from the repository as it stands.
+6. Public history rewrite — unchanged, still the repository owner's decision.

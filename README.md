@@ -689,28 +689,48 @@ attacked exactly this gap; the record is in `bench/results/experiments.md`.
    retries with bounded backoff, and a connection-loss classifier maps
    outages to `503` + `Retry-After` on every endpoint instead of killing the
    process — the failure drill asserts the container does not restart.
-3. **Unaligned aggregate ranges (fixed, then refined).** Aggregate queries
+3. **A database outage returned `500` on some hosts (fixed).** That
+   connection-loss classifier matched `ENOTFOUND` but not `EAI_AGAIN`. Which
+   code arrives depends on the *resolver*, not on the fault: a container
+   runtime whose embedded DNS answers `NXDOMAIN` for a stopped service gives
+   `ENOTFOUND`, while one answering `SERVFAIL` gives `EAI_AGAIN` for the
+   identical outage. On hosts in the second group, `GET /logs`,
+   `GET /logs/aggregate` and `POST /logs` returned `500` with no `Retry-After`
+   during an outage, and `withDatabaseRetry` would not retry a resolver blip at
+   startup. The whole `getaddrinfo` family is now classified as unavailable.
+   The defect survived because the classifier had no unit test at all despite
+   being the single decision point behind every `503`; it now has one
+   (`test/unit/pools.test.ts`), including the case that a client's own mistake
+   — a syntax error, a constraint violation, a fired `statement_timeout` — must
+   never be reported as the database being down.
+4. **Unaligned aggregate ranges (fixed, then refined).** Aggregate queries
    whose `since`/`until` are not minute-aligned now answer from the rollup
    interior plus exact raw slices for the partial edge minutes, instead of a
    full raw scan; sub-millisecond digits past a minute boundary are handled
    exactly. Whole edge minutes are never counted into a range that does not
    contain them.
-4. **PostgreSQL-side JSON (tried, lost, reverted).** Building one jsonb per
+5. **PostgreSQL-side JSON (tried, lost, reverted).** Building one jsonb per
    row inside PostgreSQL plus a direct response write made the drain slower
    (57.5 vs 85.0 pages/s) — jsonb construction on the single PostgreSQL CPU
    cost more than the app's serialisation under its own cap. Recorded as a
    measured loss in `bench/results/experiments.md`, not kept.
-5. **Open bottleneck (page latency).** 16.1 ms p95 versus ~1.7 ms of
-   database-side execution. The honest number stands until it changes.
-6. **Open bottleneck (aggregate tail latency).** The rollup plan is fast in its
+6. **Open bottleneck (page latency).** 16.1 ms p95 here, 87.3 ms on the Linux
+   host, against ~1.7 ms of database-side execution. Now attributable: the
+   drain is application-CPU-bound, with the container at ~89% of its cap while
+   PostgreSQL idles at 23%. Raising the cap to 2.0 CPU improves page p95 to
+   39.0 ms — still 4.9× the 8 ms budget, so the cap is not the whole story.
+7. **Open bottleneck (aggregate tail latency).** The rollup plan is fast in its
    standalone EXPLAIN capture, but concurrent end-to-end aggregate p95 is
-   101 ms. Plan selection alone does not explain the remaining HTTP tail.
+   101 ms here and 562 ms on the Linux host. It falls to 90 ms when the
+   application cap is raised, so the tail is app-side contention rather than
+   plan selection.
 
-Freshness was **not measured as a delay distribution** in the retained final
-evidence. Structurally, a `200` from `POST /logs` follows commit and there is no
-background reconciliation to fall behind, but that design argument is not a
-numeric performance measurement. The freshness gate therefore remains
-unverified pending a captured probe run.
+**Freshness is now measured** — see [Known limitations](#known-limitations) and
+[docs/linux-verification-results.md](docs/linux-verification-results.md) §6. The
+structural argument that a `200` follows commit is confirmed numerically: 3,821
+of 3,821 probes found their row on the first attempt, and the measured delay
+distribution is indistinguishable from the latency of the query doing the
+looking.
 
 ### Reconfiguration results
 
@@ -737,6 +757,16 @@ batcher now drains its whole queue per flush instead of capping at 2,000 rows;
 | PostgreSQL CPU, average | ~78% of 1 CPU | **~33%** |
 | Application CPU, average | ~10% of 0.5 CPU | **~46%** |
 | Errors | 0 | 0 |
+
+> **This table pairs environments and is the weakest evidence on this page.**
+> The "before" column was captured on different hardware with a different
+> harness from the "after" column; it is not a controlled A/B and the ratio
+> between the columns should not be quoted. The mixed-workload table below
+> *is* a clean local A/B — both columns came from the same host and harness,
+> isolating the attribute-index change. Batch size is also a large confound
+> here: measured at batch 200 rather than 50, the same configuration reaches
+> 20,720 logs/s. See [Linux verification](#linux-verification) below for
+> figures taken under one controlled protocol.
 
 The CPU inversion is the substantive result: PostgreSQL was the constraint and
 now has headroom, which is the read-headroom rule (`search_rnd/RND.md` §12.7)
@@ -767,6 +797,44 @@ instead of 10.5k at 41%.
 **Unchanged by this work.** The page-latency and drain figures above were not
 re-measured; nothing here targets the app-side materialisation cost that
 dominates them, and the open bottlenecks (5) and (6) stand as recorded.
+
+### Linux verification
+
+The figures above were all taken under Docker Desktop with the WSL2 backend,
+which was enough to make several conclusions unsafe. The branch was re-measured
+on native Linux (Ubuntu 24.04, 16 CPU, Docker 29.7.2) under the shipped caps.
+Full record, including raw-output provenance and evidence limits, is in
+[docs/linux-verification-results.md](docs/linux-verification-results.md).
+
+**Two hypotheses were put and both were refuted**, which is the main value of
+the run:
+
+- *"The application-CPU bottleneck is a WSL2 artifact."* **Wrong.** The
+  `/metrics` ceiling reproduces at 934 req/s on native Linux with ordinary port
+  NAT, and raising only the application's CPU cap multiplies it 3.6× to 4,463
+  req/s. The limit is the container's CPU allowance — roughly 0.4 ms of
+  application CPU per trivial request — not the transport.
+- *"The batch-size curve will flatten on Linux."* **Wrong.** The shape is
+  unchanged, and the batch-50 penalty is slightly worse (0.62× of batch 200,
+  against 0.69× under WSL2). Per-request cost belongs to the service.
+
+Held on both platforms: correctness throughout (typecheck, 26/26 tests with the
+integration tests actually running, smoke, 73/73 reliability), the graceful
+`SIGTERM` drain with every acknowledged row persisted, 100% first-probe
+read-after-write visibility, and pagination integrity — a full 3,165,800-row
+walk returned exactly the trusted count with 0 duplicates and 0 ordering
+violations.
+
+**Found only on Linux:** a database outage returned `500` instead of `503`
+because the error classifier listed `ENOTFOUND` but not `EAI_AGAIN`. Fixed, with
+the regression tests the classifier had never had — see
+[Durability](#durability).
+
+**Measured worse on Linux, on slower hardware:** ingestion 14,320 logs/s
+sustained under the 0.5-CPU cap (below the 15,000 requirement), the drain at
+32.2 pages/s taking 98.4 s, and page p95 at 87.3 ms. Absolute throughput is not
+comparable across the two hosts; the missed targets are recorded as misses
+either way.
 
 ---
 
@@ -831,11 +899,15 @@ dominates them, and the open bottlenecks (5) and (6) stand as recorded.
   two headers and samples from multiple attempts; the final ingestion, drain,
   and E1+E2 console summaries are not present in `bench/raw/`. Headline figures
   should be treated as run records until a clean recapture is retained.
-- **Freshness is measured as a rate, not a distribution.** The reconfiguration
-  run issued a read-after-write lookup after every accepted `POST` and found
-  the row **100%** of the time, which is the first direct evidence for
-  commit-before-acknowledgement. It is still a success rate, not the delay
-  distribution the freshness gate asks for, so that gate remains open.
+- ~~**Freshness is unmeasured.**~~ **Closed.** A harness probing after every
+  accepted `POST` against a warm 3.17 M-row database found the row on the
+  **first** probe 3,821 times out of 3,821, with delay p50 95 ms, p95 214 ms,
+  p99 303 ms, max 537 ms. The delay distribution and the probe's own latency
+  agree to within a fraction of a millisecond, which is the measurement
+  confirming there is no visibility lag to find: the row is already committed
+  when the `POST` is acknowledged, and the "delay" is just the cost of the
+  query looking for it. Details in
+  [docs/linux-verification-results.md](docs/linux-verification-results.md) §6.
 - **Unaligned aggregate ranges read raw edge slices.** Correct and exact, but
   a range whose edges fall inside minutes costs two raw slice queries on top
   of the rollup interior; `q`/`attr.*` aggregate queries scan raw rows by
@@ -846,19 +918,29 @@ dominates them, and the open bottlenecks (5) and (6) stand as recorded.
   the `jsonb_path_ops` GIN index answers any key, and a hot key additionally
   buys sort-free cursor order. The compose `QUERY_STATEMENT_TIMEOUT_MS=5000` is
   the backstop for a `q` scan on a large table.
-- **The application container is now the binding constraint.** With PostgreSQL
-  at ~33% under ingestion and the application at ~46% of its 0.5-CPU cap,
-  further ingestion throughput has to come from app-side cost — JSON parsing,
-  validation, and response serialisation — not from the database. This inverts
-  the constraint the earlier tuning was written against.
+- **The application container is the binding constraint — confirmed on native
+  Linux.** It sits at ~99% of its 0.5-CPU cap on the write path and ~89% on the
+  read path, while PostgreSQL keeps 40–75% of its own cap in reserve. Raising
+  only the application cap to 2.0 CPU takes ingestion from 13,922 to 25,574
+  logs/s and moves saturation onto PostgreSQL, which is the diagnostic that
+  settles it. Further throughput has to come from app-side cost, not from the
+  database. This inverts the constraint the earlier tuning was written against.
+- **15,000 logs/s is not met under the shipped 0.5-CPU application cap.**
+  14,320 logs/s sustained over 221 s on the Linux host, 0 errors. The same run
+  reaches 25,574 logs/s with the cap at 2.0 CPU, so this is a cap choice rather
+  than a defect — but under the caps as shipped, the specification's ingestion
+  requirement is missed on that hardware.
 - **Index footprint remains material.** The preliminary ~600k-row snapshot was
   110 MB of indexes in 203 MB total; the legacy 3 M-row summary records 514 MB
   of indexes in 1,495 MB total (34%). The old capture script did not traverse
   the partition tree, so neither historical ratio is independently
   reconstructible from the shipped raw evidence. New captures emit exact byte
-  counts across every partition. Both historical snapshots also predate
-  `logs_attributes_gin_idx`, which adds a fifth index per partition; its
-  storage cost has not been captured, only its ~4.5% ingestion cost.
+  counts across every partition. Both historical snapshots predate
+  `logs_attributes_gin_idx`; it has since been measured at **131 MB of 477 MB
+  of index at 3.17 M rows** (~41 bytes/row, ~13% of total `logs` size) — see
+  [docs/linux-verification-results.md](docs/linux-verification-results.md) §5.
+  The shipped configuration carries **three** indexes per partition, the GIN
+  index included.
 - **Default durability profile is not crash-durable.** With `SYNC_COMMIT=off`
   (the default), an unclean PostgreSQL host failure can lose a window of
   acknowledged writes; a `200` remains a committed-and-queryable guarantee.
