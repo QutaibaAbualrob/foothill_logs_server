@@ -12,14 +12,16 @@ The narrative write-ups are `docs/test_results/batch33-and-cpu-profile.md` and
 | | Express (`main`) | Fastify (`perf/fastify-node`) |
 | --- | ---: | ---: |
 | Ingest, batch 200 | 13,916 logs/s | **14,980 logs/s** (+7.7%) |
-| Ingest, batch 33 | 8,170–9,076 logs/s | **10,532–11,366 logs/s** (~+25–35%) |
+| Ingest, batch 33 *(screen only)* | 8,170–9,076 logs/s | 10,532–11,366 logs/s (~+25–35%) |
 | Aggregate p95 during ingestion | 631 ms | **554 ms** |
 | Paired runs won (batch 200) | 0 of 8 | **8 of 8** |
 
-The gain grows as batches shrink, tracking the HTTP layer's share of on-CPU time
-(19.3% at batch 33, 7.5% at batch 200). The batch-200 figure is the rigorous one
-— interleaved and repeated; the batch-33 figure pools five runs across two
-sessions and is directionally solid but not interleaved.
+**Only batch 200 meets the measurement standard** (see `agents.md`): interleaved,
+three repeats per side, clean volume per run, build verified in-container. The
+batch-33 row pools non-interleaved runs across two sessions — it is a screen, not
+evidence, and is shown only because it matches the HTTP layer's share of on-CPU
+time at each batch size (19.3% at batch 33, 7.5% at batch 200). Do not quote it
+as a result. Batches 50 and 500 are unmeasured to standard.
 
 Batch 33 on `main` is 8,169.8 logs/s with the application container at 47.9% of
 its 50% cap — the application is the constraint there, not PostgreSQL.

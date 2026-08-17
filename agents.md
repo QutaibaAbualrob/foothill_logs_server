@@ -76,15 +76,19 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 - [x] **Fastify on Node, on a branch** — 2026-08-17, branch `perf/fastify-node`
   at `68766fe`. Green on every gate (32/32 tests, smoke, 73/73 reliability,
-  failure drill), **~7.7% faster than Express at batch 200** — winning all eight
-  paired runs across three independently taken A/B sets — and **~25–35% faster
-  at batch 33**. Aggregate p95 improves too (554 ms against 631 ms). **Not
-  merged — that call is the owner's.** Evidence:
-  `docs/test_results/fastify-branch-results.md`.
+  failure drill) and **~7.7% faster than Express at batch 200**, winning all
+  eight paired runs across three independently taken A/B sets. Aggregate p95
+  improves too (554 ms against 631 ms). **Not merged — that call is the
+  owner's.** Evidence: `docs/test_results/fastify-branch-results.md`.
 
-  The gain grows as client batches shrink, tracking the HTTP layer's share of
-  on-CPU time (19.3% at batch 33, 7.5% at batch 200). The service does not
-  choose the batch size, so the small-batch case is not hypothetical.
+  **Batch 200 is the only point measured to the standard below.** An indicative
+  figure of ~25–35% at batch 33 appears in the write-up; it pools
+  non-interleaved runs across sessions and **does not meet the standard** — it
+  is a screen, not evidence, and must not be quoted as a result until re-run
+  interleaved. It is plausible because it matches the HTTP layer's share of
+  on-CPU time at each batch size (19.3% at batch 33, 7.5% at batch 200), and the
+  service does not choose the client's batch size — but plausible is not
+  measured. Batches 50 and 500 are unmeasured to standard.
 
   The branch declares no response schemas, which is where Fastify's
   serialisation advantage lives, so this is its floor rather than its ceiling.
@@ -135,11 +139,59 @@ the "is it worth it" gate below, not a substitute for it.
 - Framework work happens **on a branch, never directly on main**:
   1. Try **Fastify on Node** (framework swap only) on a branch.
   2. Then try **Fastify + Bun** (framework + runtime swap) on a branch.
-- **Commit to main only if the measurements show it's worth it.** For every
-  step, record before/after: batch-33 throughput, ingest p50/p95/p99,
-  aggregate p95, and the drain page rate.
+- **Commit to main only if the measurements show it's worth it**, and only on
+  evidence meeting "The measurement standard" below. For every step record
+  before/after: throughput at batch 200 **and** batch 33, ingest p50/p95/p99,
+  aggregate p95, and the drain page rate. Batch 33 alone is not sufficient — it
+  is the most flattering point for an HTTP-layer change.
 - Scope, risks, and the gates that must stay green for the swap: the private
   analysis repo (see `plan/internal/SANITIZATION.md` §7), AGENT-HANDOFF §9.
+
+## The measurement standard — what counts as evidence here
+
+Any A/B that informs a merge, a revert, or a claim in a results file must meet
+**all seven** of these. A run that misses one is a screen, not evidence: label it
+as such and do not put its number in a headline.
+
+1. **Interleaved.** Alternate the two builds — A, B, A, B, A, B. Never all of A
+   then all of B; ordering effects and table growth are large enough to invent a
+   result on their own.
+2. **Three repeats per side, minimum.** Two cannot separate a 10% effect from
+   6% noise.
+3. **Clean volume per run.** `docker compose down -v` before every run, and
+   record the row count before each one. A warm or growing database is a
+   different experiment.
+4. **Build verified from inside the container, every run**, and the proof
+   recorded beside the result:
+
+   ```
+   docker compose exec -T api sh -c 'cat /proc/1/cmdline | tr "\0" " "; echo'
+   docker compose exec -T api sh -c 'ls node_modules | grep -xE "fastify|express"'
+   ```
+
+   A branch name is not proof. A commit that landed on the wrong branch inverted
+   an entire A/B on 2026-08-17 and produced a confident, backwards conclusion.
+5. **One variable.** Runtime or framework or index — not two at once. If the
+   change necessarily moves two things, say so explicitly in the write-up.
+6. **One stack up at a time**, verified before starting. Two compose projects
+   running at once contaminate both the host and `capture-resources.mjs`.
+7. **Report the spread, not just the mean**, per cell, plus errors, rows before
+   and after, and both containers' CPU average and maximum. A cell with non-zero
+   errors is not a throughput number.
+
+**Measured noise, for calibration:** ~6% for a repeated build within a session,
+~11% across sessions. Never compare against a number from an earlier session.
+
+**Measure at the operating point the decision depends on.** Batch 33 is the most
+flattering point for any HTTP-layer change — the framework/runtime share of
+on-CPU time is 19.3% there against 7.5% at batch 200 — and batch 200 is where
+the 15,000 logs/s target actually lives. A result at one batch size does not
+generalise across the curve; say which point you measured and do not imply the
+rest.
+
+**Also check the database is not the real ceiling.** If PostgreSQL is at or near
+its cap in a cell, that cell is database-limited, not application-limited. Mark
+it. Two builds converging there is a real finding, not a failed run.
 
 ## Standing rules
 

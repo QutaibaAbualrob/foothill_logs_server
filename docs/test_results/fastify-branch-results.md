@@ -3,13 +3,16 @@
 **Branch:** `perf/fastify-node` at `68766fe` ("Swap the HTTP layer from Express to Fastify")
 **Baseline:** `main` at `1bfb036`
 **Date:** 2026-08-17
-**Verdict: Fastify is ~8% faster at batch 200 and ~25–35% faster at batch 33**,
-winning every paired run, with all gates green. It meets the "commit to main
-only if the measurements show it's worth it" bar. The merge decision is the
-owner's.
+**Verdict: Fastify is ~8% faster at batch 200**, winning every paired run, with
+all gates green. It meets the "commit to main only if the measurements show it's
+worth it" bar. The merge decision is the owner's.
 
-The gain grows as client batches shrink, because that is when the HTTP layer is
-a larger share of the work (§3.5). The service does not choose the batch size.
+**Scope of that claim: batch 200 only.** It is the only point measured to the
+standard in `agents.md` — interleaved, three repeats per side, clean volume per
+run, build verified in-container. §3.5 reports an indicative ~25–35% at batch 33
+from non-interleaved runs pooled across sessions; that is a **screen, not
+evidence**, and is not part of this verdict. Batches 50 and 500 are unmeasured
+to standard.
 
 Read §3.1 before trusting any number in this file: three earlier readings of this
 same experiment were wrong, for three different reasons, and the corrections are
@@ -164,9 +167,12 @@ run, including two Node + Express runs taken independently on the Bun branch:
 | Express | mine, then two from the Bun-branch session | 8,170 / 8,639 / 9,076 |
 | Fastify | two runs | 11,366 / 10,532 |
 
-**Fastify is roughly 25–35% faster at batch 33**, against 7.7% at batch 200.
-Weaker evidence than §3.2 — these were not interleaved — but the direction is
-consistent across five runs and two sessions.
+This suggests Fastify is roughly 25–35% faster at batch 33 against 7.7% at batch
+200 — but **it does not meet the measurement standard and must not be quoted as
+a result.** These runs were not interleaved, they sit at different positions in
+growing-database sequences, and they span two sessions. Under the standard in
+`agents.md` that makes them a screen. Batch 33 needs three interleaved pairs
+with in-container verification before this number means anything.
 
 This is exactly what the profile predicted and I failed to notice at the time:
 Express + router + `_http_*` is **19.3% of on-CPU at batch 33 and 7.5% at batch
