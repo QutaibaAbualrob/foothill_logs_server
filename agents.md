@@ -105,6 +105,60 @@ that is already finished. If a task turns out to be partly done, say which part.
      produced a confident, exactly backwards conclusion. One line does it:
      `docker compose exec -T api sh -c 'ls node_modules | grep -xE "fastify|express"'`.
 
+- [x] **Express on Bun, on a branch** — 2026-08-17, branch `perf/bun-runtime` at
+  `a5a00bb`. Runtime swap only: `src/` is byte identical to `main`, so Express 5,
+  `pg` and `pg-copy-streams` run unmodified on Bun 1.3.14. Green on every gate
+  **on Bun** — 32/32 tests with `TEST_DATABASE_URL` set so the integration files
+  execute instead of self-skipping, smoke, 73/73 reliability, and the failure
+  drill with SIGTERM exit 0 and 377,800 of 377,800 acknowledged rows persisted.
+  Measured to the standard below: 12 runs, batch 200 first and then batch 33,
+  three interleaved pairs each, exclusive host, **0 errors throughout**.
+
+  | | Node 22.18 | Bun 1.3.14 | multiple |
+  | --- | ---: | ---: | ---: |
+  | batch 200 | 14,389 (13,689–14,681) | 28,345 (28,139–31,105) | **1.97×** |
+  | batch 33 | 8,217 (8,101–8,709) | 18,648 (18,327–18,697) | **2.27×** |
+
+  Bun clears the 15,000 logs/s target at both batch sizes with aggregate p95 at
+  166–284 ms and 77–84 ms respectively; **Node clears it at neither**, missing
+  batch 200 by 2–9%. **Not merged — that call is the owner's.** Evidence on that
+  branch: `bench/results/2026-08-17-bun-vs-express/` and `docs/bun-branch.md`.
+
+  **The batch-200 Bun cells are database-limited** — the api container idles a
+  third of its cap there (33.1–34.6% of 50%) while postgres reaches 84.3–100% of
+  its own. 1.97× is therefore a floor, and the compression from 2.27× is at least
+  partly the database ceiling arriving rather than the HTTP layer's share
+  shrinking. The runtime swap compresses by 1.15× across the two points where the
+  framework swap compressed 4×.
+
+  **Two measurement defects were found and fixed on that branch**, both of which
+  silently corrupt any run taken beside a second compose project:
+  `scripts/failure-drill.sh` and `scripts/capture-resources.mjs` each hardcoded
+  container names while every other docker call in them follows
+  `COMPOSE_PROJECT_NAME`. The capture one is the dangerous one — it does not
+  fail, it reports the other project's CPU and RSS as this run's.
+
+- [x] **Fastify + Bun, the fourth cell** — 2026-08-17, branch `perf/fastify-bun`
+  at `cc4b75b` (`68766fe` cherry-picked onto `perf/bun-runtime`, with a
+  regenerated `bun.lock`). All gates green, including 73/73 reliability and the
+  drill. Fastify adds **+9.4% on Bun at batch 33** and **−0.5% — a null — at
+  batch 200**, where the cell is database-limited and no HTTP-layer change can
+  move it. Evidence on that branch: `docs/test_results/fastify-bun-results.md`
+  and `bench/results/2026-08-17-fastify-bun/`.
+
+  **The 2×2 is now complete, and the two changes are not additive.** Fastify is
+  worth +30.6% on Node at batch 33 but only +9.4% on Bun: Bun's HTTP layer is
+  already fast, so there is less framework overhead left to remove. Batch 33,
+  logs/s, application-limited on every cell:
+
+  | | Express | Fastify | framework gain |
+  | --- | ---: | ---: | ---: |
+  | **Node** | 8,603 | 11,233 | +30.6% |
+  | **Bun** | 18,361 | 20,095 | +9.4% |
+  | runtime gain | **+113%** | **+79%** | |
+
+  The runtime is the larger effect by an order of magnitude, at both batch sizes.
+
 ### Next
 
 1. **Profile the read/drain path.** Only ingest has been profiled. The worst
@@ -113,17 +167,23 @@ that is already finished. If a task turns out to be partly done, say which part.
    framework swap makes its largest claim. Until this exists, the framework
    question is only half answered.
 
-2. **Decide on merging `perf/fastify-node`** (owner's call — the measurement bar
-   is met). If it merges, the drain A/B in item 1 should be taken against the
-   merged code, since the framework's effect on the read path is unmeasured.
+2. **Decide what merges** (owner's call — the measurement bar is met for all
+   three branches): `perf/fastify-node` (framework only), `perf/bun-runtime`
+   (runtime only), `perf/fastify-bun` (both). The runtime is the larger effect by
+   an order of magnitude and is the only change that clears 15,000 logs/s. If
+   anything merges, the drain A/B in item 1 should be taken against the merged
+   code, since **neither** swap's effect on the read path is measured.
 
 3. **Allocation reduction remains the largest single ingest target**, and it is
    independent of the framework: `computeRollups` (9.6% of on-CPU) and `csv`
    (5.2%) both build strings and objects per log, feeding the ~34% GC cost.
 
-4. **Optional:** re-test Fastify with response schemas, which this branch does
-   not declare. Bun is a separate variable and none of these measurements say
-   anything about it.
+4. **Optional:** re-test Fastify with response schemas, which neither Fastify
+   branch declares — that is where its serialisation advantage lives, so both
+   Fastify numbers are floors rather than ceilings.
+
+5. **Batches 50 and 500 are unmeasured on every branch.** So is peak RSS on Bun,
+   and so is any run longer than 60 s.
 
 ## The path after the measurement (owner decision, 2026-08-17)
 
@@ -135,8 +195,12 @@ the "is it worth it" gate below, not a substitute for it.
   (A 4.0-CPU run exists in `bench/raw/` as a *diagnostic control only*, to
   separate real cost from throttle stall. It is not a proposed configuration.)
 - Framework work happens **on a branch, never directly on main**:
-  1. Try **Fastify on Node** (framework swap only) on a branch.
-  2. Then try **Fastify + Bun** (framework + runtime swap) on a branch.
+  1. Try **Fastify on Node** (framework swap only) on a branch. — **done**,
+     `perf/fastify-node`.
+  2. Then try **Fastify + Bun** (framework + runtime swap) on a branch. —
+     **done**, `perf/fastify-bun`, built on `perf/bun-runtime`, which isolates
+     the runtime on its own so the two variables can be read apart. All three
+     branches are measured; see Status above.
 - **Commit to main only if the measurements show it's worth it**, and only on
   evidence meeting "The measurement standard" below. For every step record
   before/after: throughput at batch 200 **and** batch 33, ingest p50/p95/p99,
