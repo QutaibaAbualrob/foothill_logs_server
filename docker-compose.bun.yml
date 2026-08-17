@@ -1,0 +1,36 @@
+# Bun runtime overlay. Applied on top of docker-compose.yml, never instead of
+# it, so that postgres and every application setting except the runtime are
+# provably identical to the shipped stack:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml \
+#   COMPOSE_PROJECT_NAME=logs-bun HOST_PORT=8090 \
+#   docker compose up -d --build --wait
+#
+# Use a project name and a host port that do not collide with the Node stack;
+# the two are meant to be brought up one at a time, not side by side (benchmark
+# protocol §1 rule 7 — one benchmark at a time on one machine).
+services:
+  api:
+    build:
+      dockerfile: Dockerfile.bun
+    environment:
+      # --max-old-space-size is a V8 flag. Bun's heap is JavaScriptCore's and
+      # does not take it, so the Node value is cleared rather than translated:
+      # there is no equivalent hard cap, and inventing one would add a second
+      # variable to a runtime-swap experiment. mem_limit (256m, inherited) is
+      # still the real ceiling, so peak RSS is the number to watch — if Bun is
+      # OOM-killed there, `bun --smol run src/index.ts` is the documented next
+      # step, measured and reported as its own run.
+      NODE_OPTIONS: ""
+    healthcheck:
+      # The bun image ships no node binary; same probe, bun's runtime.
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 3s
+      timeout: 2s
+      retries: 30

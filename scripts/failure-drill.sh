@@ -34,8 +34,23 @@ pass() { printf '  ok    %s\n' "$*"; }
 status_of() { curl -s -o "$CURL_BODY" -w '%{http_code}' "$1" 2>/dev/null || echo "000"; }
 header_of() { curl -s -D- -o "$CURL_BODY" "$1" 2>/dev/null | grep -i "^$2:" | tr -d '\r' || true; }
 
-started_at="$(docker inspect -f '{{.State.StartedAt}}' server_loger-api-1 2>/dev/null || echo unknown)"
-restarts_before="$(docker inspect -f '{{.RestartCount}}' server_loger-api-1 2>/dev/null || echo unknown)"
+# The application container is resolved from the compose project this drill is
+# actually driving, never hardcoded. A hardcoded name silently follows whichever
+# stack happens to own it: run the drill under a second project (a runtime or
+# framework branch brought up beside the shipped stack, COMPOSE_PROJECT_NAME set)
+# and every docker inspect, docker kill and docker wait below targets the other
+# project's container while the HTTP probes go to this one. That does not fail
+# loudly — it reports restart and SIGTERM results for a container the drill never
+# exercised, and it sends a real SIGTERM to a stack nobody asked it to touch.
+API_CONTAINER="$(docker compose ps -q api 2>/dev/null | head -n1)"
+if [ -z "$API_CONTAINER" ]; then
+  echo "  FAIL  no running 'api' container in this compose project" >&2
+  echo "        (set COMPOSE_FILE / COMPOSE_PROJECT_NAME to the stack under test)" >&2
+  exit 1
+fi
+
+started_at="$(docker inspect -f '{{.State.StartedAt}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
+restarts_before="$(docker inspect -f '{{.RestartCount}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
 
 echo "== 1. baseline =="
 code="$(status_of "$BASE_URL/health")"
@@ -69,8 +84,8 @@ retry_after="$(curl -s -D- -o "$CURL_BODY" "$BASE_URL/logs?limit=1" 2>/dev/null 
 [ -n "$retry_after" ] && pass "Retry-After present ($retry_after)" || fail "Retry-After header missing on 503"
 
 echo "== 4. the application container did not restart =="
-started_now="$(docker inspect -f '{{.State.StartedAt}}' server_loger-api-1 2>/dev/null || echo unknown)"
-restarts_now="$(docker inspect -f '{{.RestartCount}}' server_loger-api-1 2>/dev/null || echo unknown)"
+started_now="$(docker inspect -f '{{.State.StartedAt}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
+restarts_now="$(docker inspect -f '{{.RestartCount}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
 if [ "$started_now" = "$started_at" ] && [ "$restarts_now" = "$restarts_before" ]; then
   pass "same process throughout (started $started_at, restarts $restarts_now)"
 else
@@ -94,7 +109,7 @@ post_code="$(curl -s -o "$CURL_BODY" -w '%{http_code}' -X POST "$BASE_URL/logs" 
   -d "{\"logs\":[{\"timestamp\":\"$DRILL_TS\",\"level\":\"info\",\"service\":\"drill\",\"message\":\"after recovery\"}]}" 2>/dev/null || echo "000")"
 [ "$post_code" = "200" ] && pass "POST /logs -> 200" || fail "POST /logs -> $post_code after recovery"
 
-started_final="$(docker inspect -f '{{.State.StartedAt}}' server_loger-api-1 2>/dev/null || echo unknown)"
+started_final="$(docker inspect -f '{{.State.StartedAt}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
 [ "$started_final" = "$started_at" ] \
   && pass "survived the whole drill without a restart" \
   || fail "container restarted during recovery"
@@ -115,21 +130,21 @@ DURATION_SECONDS=15 CONCURRENCY=32 BATCH_SIZE=200 BASE_URL="$BASE_URL" node scri
 bench_pid=$!
 sleep 4
 
-started_sig_before="$(docker inspect -f '{{.State.StartedAt}}' server_loger-api-1 2>/dev/null || echo unknown)"
+started_sig_before="$(docker inspect -f '{{.State.StartedAt}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
 
 # First SIGTERM mid-ingestion, then a second one a second later. The handler is
 # idempotent (the app's shuttingDown guard ignores repeats), so a repeated signal
 # must not turn a graceful exit into a kill or an error code.
-docker kill --signal=SIGTERM server_loger-api-1 >/dev/null 2>&1 || true
+docker kill --signal=SIGTERM "$API_CONTAINER" >/dev/null 2>&1 || true
 sleep 1
-docker kill --signal=SIGTERM server_loger-api-1 >/dev/null 2>&1 || true
+docker kill --signal=SIGTERM "$API_CONTAINER" >/dev/null 2>&1 || true
 
 # docker kill is a manual stop, so the compose restart policy does NOT fire
 # after it — that is by design, and it is exactly what lets us observe the
 # process's own exit code. docker wait reports the first exit it observes.
-exit_code="$(timeout 30 docker wait server_loger-api-1 2>/dev/null)"
+exit_code="$(timeout 30 docker wait "$API_CONTAINER" 2>/dev/null)"
 if [ -z "$exit_code" ]; then
-  exit_code="$(docker inspect -f '{{.State.ExitCode}}' server_loger-api-1 2>/dev/null || echo unknown)"
+  exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
   note "docker wait raced; fell back to State.ExitCode from inspect"
 fi
 [ "$exit_code" = "0" ] \
@@ -137,7 +152,7 @@ fi
   || fail "exit code $exit_code after repeated SIGTERM (expected 0)"
 
 # Bring the service back the way an operator would, then confirm it recovers.
-docker start server_loger-api-1 >/dev/null 2>&1 || true
+docker start "$API_CONTAINER" >/dev/null 2>&1 || true
 recovered_6=0
 for _ in $(seq 1 30); do
   sleep 2
@@ -166,11 +181,11 @@ else
   fail "could not compute persisted-row delta (before=$count_before after=$count_after accepted=$accepted)"
 fi
 
-docker logs server_loger-api-1 2>&1 | grep -q '"event":"shutdown"' \
+docker logs "$API_CONTAINER" 2>&1 | grep -q '"event":"shutdown"' \
   && pass "app logged a graceful shutdown event" \
   || fail "no shutdown event in the api container logs"
 
-started_sig_after="$(docker inspect -f '{{.State.StartedAt}}' server_loger-api-1 2>/dev/null || echo unknown)"
+started_sig_after="$(docker inspect -f '{{.State.StartedAt}}' "$API_CONTAINER" 2>/dev/null || echo unknown)"
 # docker kill is a manual stop, so the restart policy does not fire and
 # RestartCount stays put — that is expected. What proves the signal was
 # honoured is the exit code above, plus the new StartedAt after our start.
