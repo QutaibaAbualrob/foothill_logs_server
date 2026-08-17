@@ -50,6 +50,12 @@ main-rerun-drain.json,drain,fastify,void-as-comparison,,,,62.756,2019009,0,,18.1
 main-sweep-b200.json,ingest,express,historical,200,96,30,30.344,381800,0,12582.4,1468.8,2129.7,2446.7,630.8,2026-08-17T14:32:22.646Z,"earlier session, different day/state"
 main-sweep-b50.json,ingest,express,historical,50,96,30,30.26,250900,0,8291.5,549.0,864.9,907.1,299.3,2026-08-17T14:31:35.184Z,"earlier session, different day/state"
 main-sweep-b500.json,ingest,express,historical,500,96,30,31.117,429500,0,13802.9,3526.3,3998.7,6910.9,1215.3,2026-08-17T14:33:02.722Z,"earlier session, different day/state"
+std-b33-fastify-run1.json,ingest,fastify,verified,33,96,60,60.565,672672,0,11106.6,277.8,471.5,523.7,167.4,2026-08-17T19:54:13.394Z,batch-33 A/B to standard - labels verified in-container
+std-b33-fastify-run2.json,ingest,fastify,verified,33,96,60,60.779,700788,0,11530.1,259.8,446.6,558.5,199.8,2026-08-17T19:56:33.161Z,batch-33 A/B to standard - labels verified in-container
+std-b33-fastify-run3.json,ingest,fastify,verified,33,96,60,60.814,672804,0,11063.4,283.1,478.9,597.6,215.5,2026-08-17T19:59:04.433Z,batch-33 A/B to standard - labels verified in-container
+std-b33-main-run1.json,ingest,express,verified,33,96,60,60.658,512424,0,8447.8,366.6,587.2,735.7,182.4,2026-08-17T19:53:03.964Z,batch-33 A/B to standard - labels verified in-container
+std-b33-main-run2.json,ingest,express,verified,33,96,60,60.242,509157,0,8451.8,367.5,593.3,700.6,169.1,2026-08-17T19:55:23.739Z,batch-33 A/B to standard - labels verified in-container
+std-b33-main-run3.json,ingest,express,verified,33,96,60,60.227,536646,0,8910.3,339.4,593.0,698.6,197.8,2026-08-17T19:57:55.051Z,batch-33 A/B to standard - labels verified in-container
 warm-fastify-node-measured1.json,ingest,express,relabelled,200,96,30,31.107,426800,0,13720.5,1369.9,1957.8,2215.9,762.3,2026-08-17T18:44:53.455Z,warm-up controlled - filename inverted
 warm-fastify-node-measured2.json,ingest,express,relabelled,200,96,30,30.631,433200,0,14142.7,1299.2,1820.1,2211.5,715.9,2026-08-17T18:47:30.120Z,warm-up controlled - filename inverted
 warm-fastify-node-warmup1.json,ingest,express,relabelled,200,96,30,30.497,405400,0,13293.3,1403.4,1808.6,1841.5,731.2,2026-08-17T18:44:22.844Z,warm-up controlled - filename inverted

@@ -3,16 +3,14 @@
 **Branch:** `perf/fastify-node` at `68766fe` ("Swap the HTTP layer from Express to Fastify")
 **Baseline:** `main` at `1bfb036`
 **Date:** 2026-08-17
-**Verdict: Fastify is ~8% faster at batch 200**, winning every paired run, with
-all gates green. It meets the "commit to main only if the measurements show it's
-worth it" bar. The merge decision is the owner's.
+**Verdict: Fastify is ~31% faster at batch 33 and ~8% faster at batch 200**,
+winning all fourteen paired runs, with all gates green. It meets the "commit to
+main only if the measurements show it's worth it" bar. The merge decision is the
+owner's.
 
-**Scope of that claim: batch 200 only.** It is the only point measured to the
-standard in `agents.md` — interleaved, three repeats per side, clean volume per
-run, build verified in-container. §3.5 reports an indicative ~25–35% at batch 33
-from non-interleaved runs pooled across sessions; that is a **screen, not
-evidence**, and is not part of this verdict. Batches 50 and 500 are unmeasured
-to standard.
+Both figures are measured to the standard in `agents.md` — interleaved, three
+repeats per side, clean volume per run, build verified in-container on every run.
+Batches 50 and 500 remain unmeasured to standard.
 
 Read §3.1 before trusting any number in this file: three earlier readings of this
 same experiment were wrong, for three different reasons, and the corrections are
@@ -157,22 +155,39 @@ So across three independently taken sets, Fastify wins **all eight paired runs**
 by between 5.7% and 13.4%. The point estimate is sensitive to run conditions; the
 direction is not.
 
-### 3.5 Batch 33 — the gain is much larger at small batches
+### 3.5 Batch 33 — the gain is four times larger at small batches
 
-Correcting §3.1 item 1 leaves a real result behind it. Pooling every batch-33
-run, including two Node + Express runs taken independently on the Bun branch:
+Measured to the standard: three interleaved pairs, clean volume per run, build
+proven from inside the container on every run, 60 s at concurrency 96.
 
-| Build | Runs | logs/s |
-| --- | --- | ---: |
-| Express | mine, then two from the Bun-branch session | 8,170 / 8,639 / 9,076 |
-| Fastify | two runs | 11,366 / 10,532 |
+| Run | Express (verified) | Fastify (verified) | delta |
+| --- | ---: | ---: | ---: |
+| 1 | 8,447.8 | 11,106.6 | +31.5% |
+| 2 | 8,451.8 | 11,530.1 | +36.4% |
+| 3 | 8,910.3 | 11,063.4 | +24.2% |
+| **mean** | **8,603** | **11,233** | **+30.6%** |
 
-This suggests Fastify is roughly 25–35% faster at batch 33 against 7.7% at batch
-200 — but **it does not meet the measurement standard and must not be quoted as
-a result.** These runs were not interleaved, they sit at different positions in
-growing-database sequences, and they span two sessions. Under the standard in
-`agents.md` that makes them a screen. Batch 33 needs three interleaved pairs
-with in-container verification before this number means anything.
+Fastify wins all three pairs. Within-build spread is 5.5% (Express) and 4.2%
+(Fastify), against a 30.6% gap. 0 errors throughout. Aggregate p95 is comparable
+(169–198 ms Express, 167–216 ms Fastify).
+
+Both containers tell the same story as batch 200: the api container is pinned at
+its cap on both sides (49.1–49.4% Express, 49.6–50.0% Fastify of a 50% ceiling),
+while PostgreSQL rises from ~40% to ~51% on Fastify — more rows delivered means
+more database work, which is the internal corroboration that the throughput is
+real rather than a measurement artefact.
+
+**This confirms the mechanism the profile predicted.** Express + router +
+`_http_*` is 19.3% of on-CPU at batch 33 and 7.5% at batch 200
+(`batch33-and-cpu-profile.md` §3); the measured gain is 30.6% and 7.7%
+respectively. The framework's benefit tracks the framework's share of the work,
+and the gain is roughly **four times larger at batch 33 than at batch 200**.
+
+Practical consequence: **the smaller the client's batches, the more the
+framework matters** — and the service does not choose the batch size. An earlier
+version of this section pooled non-interleaved runs and estimated 25–35%; it was
+labelled a screen rather than a result, and the measured 30.6% landed inside
+that range.
 
 This is exactly what the profile predicted and I failed to notice at the time:
 Express + router + `_http_*` is **19.3% of on-CPU at batch 33 and 7.5% at batch

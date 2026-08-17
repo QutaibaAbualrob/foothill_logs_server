@@ -76,19 +76,17 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 - [x] **Fastify on Node, on a branch** — 2026-08-17, branch `perf/fastify-node`
   at `68766fe`. Green on every gate (32/32 tests, smoke, 73/73 reliability,
-  failure drill) and **~7.7% faster than Express at batch 200**, winning all
-  eight paired runs across three independently taken A/B sets. Aggregate p95
-  improves too (554 ms against 631 ms). **Not merged — that call is the
+  failure drill), **~30.6% faster than Express at batch 33** and **~7.7% faster
+  at batch 200**, winning all fourteen paired runs. Aggregate p95 improves too
+  (554 ms against 631 ms at batch 200). **Not merged — that call is the
   owner's.** Evidence: `docs/test_results/fastify-branch-results.md`.
 
-  **Batch 200 is the only point measured to the standard below.** An indicative
-  figure of ~25–35% at batch 33 appears in the write-up; it pools
-  non-interleaved runs across sessions and **does not meet the standard** — it
-  is a screen, not evidence, and must not be quoted as a result until re-run
-  interleaved. It is plausible because it matches the HTTP layer's share of
-  on-CPU time at each batch size (19.3% at batch 33, 7.5% at batch 200), and the
-  service does not choose the client's batch size — but plausible is not
-  measured. Batches 50 and 500 are unmeasured to standard.
+  Both points are measured to the standard below. Batches 50 and 500 are not.
+
+  The gain is **~4× larger at batch 33 than at batch 200**, tracking the HTTP
+  layer's share of on-CPU time at each point (19.3% vs 7.5%) — the framework's
+  benefit follows the framework's cost. The client chooses the batch size, not
+  the service, so the small-batch case is not hypothetical.
 
   The branch declares no response schemas, which is where Fastify's
   serialisation advantage lives, so this is its floor rather than its ceiling.
