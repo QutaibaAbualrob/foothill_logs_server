@@ -201,28 +201,38 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
-> **0. Measure the read path under concurrent ingest. This outranks everything
-> below it.**
+> **0. The read path collapses under concurrent ingest — measured 2026-08-18.**
 >
-> Every drain, page-latency and aggregate number in this repository — including
-> the 2026-08-18 walk and every figure in the 2×2 — was taken against a **static
-> table with no concurrent writers**. The service exists to serve queries *while*
-> it ingests; that condition has never been measured. The two are not close:
-> aggregate p95 is 73–83 ms on an idle stack, and the same endpoint under
-> sustained ingest has been observed in the seconds. A read path that is
-> application-limited at rest can be an order of magnitude slower when ingest is
-> competing for the same 0.5-CPU cap.
+> `scripts/mixed-workload.mjs` (`npm run bench:mixed`) now measures it, and the
+> result reframes the project: on `main`, drain runs at **0.95–1.41 pages/s
+> while ingest is running, against 37–54 pages/s idle** — a 26–50× collapse.
+> Aggregate p95 goes from 73–83 ms idle to 842–1,082 ms, p99 to 13.6 s. Inside a
+> 30 s catch-up window a client sees **13.7% of acknowledged rows**; the rest are
+> accepted but not yet findable. The api container is pinned at its 0.5-CPU cap
+> while postgres holds two thirds of its own in reserve, so the constraint is
+> **application CPU**, not the database. In the 5 s series the reader completes
+> **zero pages for ~15 consecutive seconds**. Evidence:
+> `docs/test_results/mixed-workload-baseline.md`.
 >
-> Nothing below this line should be trusted as a prediction of behaviour under
-> load until a mixed-workload harness exists: ingest running continuously at
-> small (~33-log) batches while a cursor walk and aggregate queries run against
-> the same stack, reporting drain pages/s, page p50/p95, aggregate p95, and rows
-> written versus rows visible inside a fixed window. `scripts/drain.mjs` and
-> `scripts/benchmark.mjs` are the right models; neither does this today.
+> Consequences for what is already recorded: every other read number in this
+> repo — the 2×2's drain figures, the page-latency targets, the 2026-08-18 walk
+> — was taken against a **static table**, and so describes a condition the
+> service never operates in. The drain *correctness* gate still stands; the page
+> *rate* recorded beside it does not transfer. And **ingest optimisation alone
+> can make the product worse**: accepting more rows per second while the page
+> rate sits near 1/s lengthens the backlog a reader must traverse.
 >
-> This is also the honest frame for the framework/runtime question: a swap that
-> buys throughput while the read path stays slow can make the *product* worse,
-> because more accepted rows means more rows a reader must catch up on.
+> Two properties of the harness are load-bearing, and a replacement must keep
+> them. Its ingest is **open-loop** — dispatched on a clock, not on completions
+> — because a closed-loop client throttles itself when the server slows, so no
+> backlog forms and the effect stays invisible. And visibility is measured
+> **while writes continue**: against a quiesced server the same build reports
+> 100% visible instead of 13.7%.
+>
+> The open question is therefore no longer "is Fastify + Bun faster at ingest"
+> but **"does it lift the read path under load"** — it halves per-request
+> application cost, which is exactly the pinned resource. Run this harness
+> against it before deciding anything else.
 
 **The open decision is what merges. For the Bun branches the throughput bar is
 met, the drain correctness gate is now met, and two adoption checks are not.**

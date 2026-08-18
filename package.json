@@ -18,6 +18,7 @@
     "drill": "bash scripts/failure-drill.sh",
     "bench": "node scripts/benchmark.mjs",
     "bench:drain": "node scripts/drain.mjs",
+    "bench:mixed": "node scripts/mixed-workload.mjs",
     "bench:load": "bash scripts/bench-load.sh",
     "bench:capture": "node scripts/capture-resources.mjs",
     "migrate": "tsx src/db/migrate-cli.ts"
