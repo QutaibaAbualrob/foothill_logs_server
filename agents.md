@@ -199,6 +199,38 @@ that is already finished. If a task turns out to be partly done, say which part.
   recorded for `main` earlier — different build, different session, different
   table size.
 
+- [x] **Schema: ingest time recorded, the two free-text fields bounded** —
+  2026-08-18, `main` at `58ad64d`, migration
+  `003_ingested_at_and_field_bounds.sql`. `ingested_at` is added in **two
+  statements**, not the obvious one-liner: `clock_timestamp()` is VOLATILE, and
+  PostgreSQL only keeps a default in the catalog when it is non-volatile, so
+  `ADD COLUMN ... NOT NULL DEFAULT clock_timestamp()` rewrites **every
+  partition** under ACCESS EXCLUSIVE — and `migrate()` runs at startup before
+  the service serves traffic, which turns a restart into an outage. Adding the
+  column nullable and then setting the default is catalog-only. The length
+  constraints are `NOT VALID` for the same reason. `service`/`message` also gain
+  matching edge checks in `validateEntry`, and timestamps gain a retention-window
+  floor (previously only a future bound existed, so a backdated row landed in the
+  DEFAULT partition, which `dropExpiredPartitions` never drops). Verified against
+  PostgreSQL 16.4 on a populated partitioned table.
+
+- [x] **The failure drill was vacuous, and is now real** — 2026-08-18, `main` at
+  `ec09f9c`. `failure-drill.sh` and `capture-resources.mjs` both hardcoded
+  `server_loger-*` container names, which stopped matching when the working
+  directory was renamed. The drill was sending SIGTERM to a container that did
+  not exist, with the failure swallowed by `|| true`, so the graceful-shutdown
+  gate **passed by never running**. Both now resolve through
+  `docker compose ps -q` and fail loudly. Treat any drill or resource result
+  taken on `main` before this date as unverified. See Standing rules.
+
+- [x] **Mixed-workload harness, and the read-path A/B** — 2026-08-18, `main` at
+  `987eab5`. `scripts/mixed-workload.mjs` (`npm run bench:mixed`) is the first
+  harness here that reads while writing. It settles the framework/runtime
+  question on the read path rather than the write path: Fastify + Bun holds
+  **19.6–21.7 drain pages/s and 99.6–99.8% visible** against Express + Node's
+  **0.96–1.09 pages/s and 14.5–15.3%**. Full detail and the caveats are in item 0
+  of Next, below, and in `docs/test_results/mixed-workload-baseline.md`.
+
 ### Next
 
 > **0. The read path collapses under concurrent ingest — and Fastify + Bun is
