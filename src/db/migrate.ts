@@ -8,6 +8,7 @@ const MIGRATIONS = [
   "001_init.sql",
   "002_attributes_gin.sql",
   "003_ingested_at_and_field_bounds.sql",
+  "004_drop_service_level_page_idx.sql",
 ] as const;
 
 const HOT_ATTRIBUTE_INDEX_PREFIX = "logs_attr_";
