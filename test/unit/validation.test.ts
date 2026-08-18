@@ -73,6 +73,19 @@ test("validation enforces the retention floor without disturbing the future boun
   ]);
 });
 
+test("the retention floor is off unless a caller passes one", () => {
+  // Guards the ingest contract: accepting a backdated log and deleting it later
+  // is dishonest, but refusing it is a behaviour change, so it must never be
+  // switched on implicitly. MAX_LOG_AGE_DAYS defaults to 0, which config maps to
+  // no floor at all.
+  const ancient = {
+    logs: [{ timestamp: "1999-01-01T00:00:00Z", level: "info", service: "a", message: "b" }],
+  };
+  assert.equal(validateIngestBody(ancient, NOW).logs.length, 1);
+  assert.equal(validateIngestBody(ancient, NOW, Number.POSITIVE_INFINITY).logs.length, 1);
+  assert.equal(validateIngestBody(ancient, NOW, 30 * DAY_MS).rejected.length, 1);
+});
+
 test("validation bounds service and message length", () => {
   const result = validateIngestBody(
     {

@@ -199,6 +199,16 @@ that is already finished. If a task turns out to be partly done, say which part.
   recorded for `main` earlier — different build, different session, different
   table size.
 
+- [x] **The ingest age floor is opt-in, off by default** — 2026-08-18. Added
+  2026-08-18 derived from `RETENTION_DAYS`, then made opt-in the same day before
+  it could ship. Rejecting a backdated log is more honest than accepting it and
+  deleting it on the next retention pass, but it is a **change to the ingest
+  contract**: a client backfilling history gets a per-entry rejection where it
+  previously got a 200. `MAX_LOG_AGE_DAYS` (default `0` = no floor) now controls
+  it, and it is exposed in `docker-compose.yml` so it is actually reachable —
+  setting it only in the host shell does nothing, since compose passes through
+  just what the `environment:` block declares. Verified end to end both ways.
+
 - [x] **Schema: ingest time recorded, the two free-text fields bounded** —
   2026-08-18, `main` at `58ad64d`, migration
   `003_ingested_at_and_field_bounds.sql`. `ingested_at` is added in **two

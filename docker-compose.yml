@@ -56,6 +56,12 @@ services:
       # on it.
       HOT_ATTRIBUTE_KEYS: ""
       RETENTION_DAYS: "30"
+      # Reject logs older than this many days at ingest, rather than accepting
+      # them and deleting them on the next retention pass. Refusing is the more
+      # honest answer, but it is a change to the ingest contract -- a client
+      # backfilling history gets a per-entry rejection where it used to get a
+      # 200 -- so it is opt-in and off by default. 0 disables the check.
+      MAX_LOG_AGE_DAYS: "${MAX_LOG_AGE_DAYS:-0}"
       WRITE_POOL_SIZE: "2"
       QUERY_POOL_SIZE: "8"
       # Attribute filters are index-backed (see migration 002), so this is a

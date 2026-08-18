@@ -38,7 +38,10 @@ const app = createApp({
   queries,
   cursors,
   bodyLimit: config.bodyLimit,
-  maxLogAgeMs: config.retentionDays * 86_400_000,
+  maxLogAgeMs:
+    config.maxLogAgeDays === 0
+      ? Number.POSITIVE_INFINITY
+      : config.maxLogAgeDays * 86_400_000,
   isReady: () => ready,
 });
 // Fastify creates and owns the HTTP server; the timeouts are set on it

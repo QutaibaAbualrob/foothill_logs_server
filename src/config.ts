@@ -12,6 +12,8 @@ export interface AppConfig {
   readonly queryStatementTimeoutMs: number;
   readonly cursorSecret: string;
   readonly retentionDays: number;
+  /** 0 disables the ingest age floor entirely, which is the default. */
+  readonly maxLogAgeDays: number;
   readonly retentionIntervalMs: number;
   readonly retentionBatchRows: number;
   readonly batchDelayMs: number;
@@ -80,6 +82,13 @@ export function loadConfig(): AppConfig {
     queryStatementTimeoutMs: integer("QUERY_STATEMENT_TIMEOUT_MS", 10_000, 100, 120_000),
     cursorSecret: process.env.CURSOR_SECRET ?? randomBytes(32).toString("base64url"),
     retentionDays: integer("RETENTION_DAYS", 30, 1, 3_650),
+    // Rejecting a backdated log at the edge is more honest than accepting it
+    // and deleting it on the next retention pass, but it is a change to the
+    // ingest contract: a client backfilling history gets a per-entry rejection
+    // where it used to get a 200. That is opt-in rather than implied by
+    // RETENTION_DAYS, so upgrading cannot silently start refusing data a
+    // caller was previously allowed to send. 0 means no floor.
+    maxLogAgeDays: integer("MAX_LOG_AGE_DAYS", 0, 0, 3_650),
     retentionIntervalMs: integer("RETENTION_INTERVAL_MS", 3_600_000, 1_000, 86_400_000),
     retentionBatchRows: integer("RETENTION_BATCH_ROWS", 5_000, 100, 50_000),
     batchDelayMs: integer("BATCH_DELAY_MS", 5, 0, 100),
