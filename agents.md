@@ -21,7 +21,7 @@ Windows and say so.
 | `src/`, `scripts/`, `test/`, `load/` | The code, benchmark harnesses, correctness gates, load tests. |
 | `docker-compose.yml`, `Dockerfile`, `package.json` | What gets run: app 0.5 CPU / 256 MB, database 1 CPU / 1 GB. The app CPU cap is settled at 0.5 — do not raise it. |
 | `docs/test_results/` | Measured runs of this code on Linux — the source of truth for performance numbers. |
-| `plan/` | The delivery plan: `00-MASTER-PLAN.md` (thesis + schedule), `HANDOFF.md` (state of the build), `05-BENCHMARK-PROTOCOL.md` (how we measure). |
+| `plan/` | The delivery plan: `00-MASTER-PLAN.md` (thesis + schedule), `HANDOFF.md` (state of the build), `05-BENCHMARK-PROTOCOL.md` (how we measure), `08-DATABASE-COST-REDUCTION.md` (**the work in flight — read this before touching the database**). |
 | `plan/internal/SANITIZATION.md` | **Pre-push review. Read it before every commit/push.** Gitignored — never tracked. |
 | `search_rnd/RND.md` | The R&D record: research decisions and design rules. |
 | `bench/` | Raw benchmark outputs (`raw/` is gitignored) and measured results. |
@@ -246,6 +246,35 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
+> **ACTIVE WORK — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
+>
+> The constraint has moved onto PostgreSQL, and the plan for reducing it is
+> **`plan/08-DATABASE-COST-REDUCTION.md`**. Read that before starting any
+> database work, and before picking up items 1–3 below — several of them are
+> now scheduled there rather than free-floating.
+>
+> **Phase 1 (items 1–5): reduce database CPU per ingested row.** No durability
+> trade in any of them. Running **item 1 first and alone** — removing or
+> narrowing the two zero-scan indexes — because its result changes the expected
+> value of the other four. Phase 1 items: index removal/narrowing, the partial
+> attribute index, binary `COPY`, `max_wal_size`, `wal_buffers`.
+>
+> **Phase 2 (items 6–9): measurement gaps, not tuning.** Explicitly **not
+> scheduled** until phase 1 reports: background-writer tuning (direction
+> unknown — see the plan), a per-request read-after-write probe, ordering and
+> duplicate assertions on the walk *under ingest*, and a closed-loop mode for
+> the harness.
+>
+> **Two standing rules for this work.** One variable per run. And any index
+> change reports its **read cost as well as its write gain** — a write gain
+> alone is not a decision, because this workload never filters by service or by
+> attribute and so cannot see what those indexes are for.
+>
+> Book-sourced candidates for the same problem, with citations and their own
+> ranking, are in `search_rnd/BOOK-OPTIMIZATION-REVIEW.md` (§6 write path, §7
+> read/consistency). It was derived independently and agrees on the two leading
+> items.
+
 > **0. The read path collapses under concurrent ingest — and Fastify + Bun is
 > the fix. Measured 2026-08-18.**
 >
@@ -377,6 +406,11 @@ RSS under a soak is still open.
    from ~158 ms to ~0.4 ms. It makes them an explicit trade to measure: run the
    drop against `DRAIN_FILTERS=service=checkout` so the read cost is exercised,
    not just the write gain.
+
+   **Both halves of this are now scheduled as phase 1 item 1 in
+   `plan/08-DATABASE-COST-REDUCTION.md`** — do not start it from this entry
+   alone, and do not report a write gain without the filtered-walk read cost
+   beside it.
 
    Second untouched signal: `buffers_backend` 38,055 against the checkpointer's
    919 and the bgwriter's 18,238 — writers are stalling to find clean buffers.
