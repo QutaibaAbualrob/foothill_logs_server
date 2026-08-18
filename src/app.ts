@@ -14,6 +14,8 @@ export interface AppDependencies {
   readonly queries: PgLogQueryRepository;
   readonly cursors: CursorCodec;
   readonly bodyLimit: string;
+  /** How far back an ingested timestamp may be, in milliseconds. */
+  readonly maxLogAgeMs: number;
   readonly isReady: () => boolean;
 }
 
@@ -38,7 +40,7 @@ export function createApp(dependencies: AppDependencies): express.Express {
   });
 
   app.post("/logs", asyncRoute(async (request, response) => {
-    const result = validateIngestBody(request.body);
+    const result = validateIngestBody(request.body, Date.now(), dependencies.maxLogAgeMs);
     if (result.logs.length === 0) {
       response.status(400).json({ accepted: 0, rejected: result.rejected });
       return;

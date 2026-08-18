@@ -39,6 +39,7 @@ const app = createApp({
   queries,
   cursors,
   bodyLimit: config.bodyLimit,
+  maxLogAgeMs: config.retentionDays * 86_400_000,
   isReady: () => ready,
 });
 const server = createServer(app);

@@ -45,6 +45,69 @@ test("validation rejects malformed envelopes", () => {
   );
 });
 
+const DAY_MS = 86_400_000;
+
+test("validation enforces the retention floor without disturbing the future bound", () => {
+  // Default: no floor, which is the behaviour every existing caller relies on.
+  const unbounded = validateIngestBody(
+    { logs: [{ timestamp: "2019-01-01T00:00:00Z", level: "info", service: "a", message: "b" }] },
+    NOW,
+  );
+  assert.equal(unbounded.logs.length, 1);
+
+  // With a 30-day window, the same entry is rejected per-entry rather than
+  // failing the batch, and an entry inside the window still passes.
+  const bounded = validateIngestBody(
+    {
+      logs: [
+        { timestamp: "2019-01-01T00:00:00Z", level: "info", service: "a", message: "b" },
+        { timestamp: "2026-08-16T11:00:00Z", level: "info", service: "a", message: "b" },
+      ],
+    },
+    NOW,
+    30 * DAY_MS,
+  );
+  assert.equal(bounded.logs.length, 1);
+  assert.deepEqual(bounded.rejected, [
+    { index: 0, reason: "timestamp is older than the retention window" },
+  ]);
+});
+
+test("validation bounds service and message length", () => {
+  const result = validateIngestBody(
+    {
+      logs: [
+        {
+          timestamp: "2026-08-16T11:59:59Z",
+          level: "info",
+          service: "s".repeat(256),
+          message: "b",
+        },
+        {
+          timestamp: "2026-08-16T11:59:59Z",
+          level: "info",
+          service: "a",
+          message: "m".repeat(65_537),
+        },
+        // Exactly at the limit on both fields is accepted, so the bound is
+        // inclusive and matches the CHECK constraints in migration 003.
+        {
+          timestamp: "2026-08-16T11:59:59Z",
+          level: "info",
+          service: "s".repeat(255),
+          message: "m".repeat(65_536),
+        },
+      ],
+    },
+    NOW,
+  );
+  assert.equal(result.logs.length, 1);
+  assert.deepEqual(result.rejected, [
+    { index: 0, reason: "service must be at most 255 characters" },
+    { index: 1, reason: "message must be at most 65536 characters" },
+  ]);
+});
+
 test("validation enforces future bound, flat attributes, and PostgreSQL null safety", () => {
   const result = validateIngestBody(
     {
