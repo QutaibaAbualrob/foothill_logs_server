@@ -284,32 +284,22 @@ that is already finished. If a task turns out to be partly done, say which part.
 > `since`+`until`-bounded and the denominator covers the same half-open window,
 > after an earlier version reported an impossible 100.1%.
 
-**The open decision is what merges. For the Bun branches the throughput bar is
-met, the drain correctness gate is now met, and two adoption checks are not.**
-Merging on throughput evidence alone would still ship a stack CI has never built
-or smoked. The decision stays the owner's; what follows are its prerequisites,
-in order.
+**Fastify + Bun is merged and is what ships** — 2026-08-18. A bare
+`docker compose up` builds the Bun image and runs `bun run src/index.ts`; the
+`Dockerfile.bun` / `docker-compose.bun.yml` overlay pair is gone, folded into the
+base files. CI installs both runtimes and runs `npm run typecheck` (load-bearing
+now — the image has no build step, so this is the only thing between a type error
+and production), the suite on tsx, the suite on `bun test`, then builds and smokes
+the Bun image. Gates on the merged tree: typecheck clean, **34/34 on tsx with
+integration executing**, **66 pass / 0 fail on Bun's runner**, smoke, 73/73
+reliability, drill PASS, and G0 verified with no environment variables set.
 
-1. **Make CI build and test what would actually ship — now the blocking item.**
-   `.github/workflows/ci.yml` pins `node-version: 22.18.0`, then runs `npm ci`,
-   `npm test` (`tsx --test` — Node's runner), `npm run build` (tsc → `dist/`),
-   `docker build -t optimized-logger:test .` against the Node `Dockerfile`, and
-   `docker compose up -d --wait` + `npm run smoke` against the Node compose file.
-   **Under Bun every one of those validates a path nothing runs:** the tsc output
-   is never executed, and the image CI smokes is not the image serving traffic.
-   `Dockerfile.bun` deliberately moved type checking out of the image into
-   `npm run typecheck`, so under Bun that gate turns load-bearing rather than
-   redundant and must stay. Bun also has its own runner (64 pass on the fourth
-   cell) — decide whether CI runs one or both.
-
-2. **Make Bun the default, then re-verify zero-config startup (G0).**
-   `docker-compose.bun.yml` states in its own header that it is an **overlay**,
-   applied as `COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml` and never
-   instead of the base file; it also expects a distinct `COMPOSE_PROJECT_NAME`
-   and a non-colliding `HOST_PORT`. Adopting means a bare `docker compose up`
-   yields Bun: fold the `dockerfile:` override, the `NODE_OPTIONS: ""` clearing
-   and the bun healthcheck into the base files, then verify from a clean volume
-   on port 8080.
+Note for anyone running the integration tests: compose does **not** publish
+postgres, and there is commonly an unrelated postgres on the host's 5432. Point
+`TEST_DATABASE_URL` at `postgres:5432` from inside the compose network, or the
+tests fail with `password authentication failed` against a foreign database and
+look like real breakage. Without `TEST_DATABASE_URL` they self-skip, which is why
+a green `npm test` alone does not mean the integration files ran.
 
 **Two adoption checks are already clear — do not spend a session repeating
 them.**
@@ -331,7 +321,7 @@ equivalent, so `mem_limit` is the only ceiling: watch peak RSS in runs you are
 already taking. **No run longer than 60 s exists on any branch**, so sustained
 RSS under a soak is still open.
 
-3. **Drain page latency — the A/B has now been run, under load. What remains is
+1. **Drain page latency — the A/B has now been run, under load. What remains is
    the idle comparison and the target itself.** Item 0 settles the version that
    matters: under concurrent ingest, page p95 is 86–90 ms on Fastify + Bun
    against 802–897 ms on Express + Node, interleaved three per side. Do **not**
@@ -357,7 +347,7 @@ RSS under a soak is still open.
    the HTTP layer. Response schemas (item 6) are the one untried application-side
    lever.
 
-4. **PostgreSQL is now the constraint — profile it.** This is the top technical
+2. **PostgreSQL is now the constraint — profile it.** This is the top technical
    item after the merge. On Fastify + Bun under mixed load the api sits at 45% of
    its 0.5 cap while **postgres runs 72–76% with peaks over its own 1.0 cap**;
    on Express it was the reverse (api pinned, postgres 28–33%). Every remaining
@@ -365,24 +355,24 @@ RSS under a soak is still open.
    Nothing here has ever profiled the database — no `pg_stat_statements`, no
    `EXPLAIN (ANALYZE, BUFFERS)` under concurrent load, no wait-event sampling.
 
-5. **The read path has never been CPU-profiled.** Only ingest has. It now has
+3. **The read path has never been CPU-profiled.** Only ingest has. It now has
    resource numbers but no profile, so which frames own its cost is unknown.
    Take it on the stack that ships — and note Bun's profiler is not V8's, so the
    `.cpuprofile` tooling used for the ingest profile does not transfer directly.
 
-6. **Allocation reduction is an ingest target, but no longer clearly the largest
+4. **Allocation reduction is an ingest target, but no longer clearly the largest
    one.** `computeRollups` (9.6% of on-CPU) and `csv` (5.2%) do build strings and
    objects per log, feeding the ~34% GC cost — **but every one of those figures
    comes from the V8 profile of Express on Node**, and describes a stack that may
    not ship. Bun's collector is JavaScriptCore's and the profile does not carry
    over. Re-measure before treating these numbers as current.
 
-7. **Optional:** re-test Fastify with response schemas, which neither Fastify
+5. **Optional:** re-test Fastify with response schemas, which neither Fastify
    branch declares — that is where its serialisation advantage lives, so both
    Fastify numbers are floors rather than ceilings. This is now the one untried
    application-side lever on page latency.
 
-8. **Coverage gaps that no run has touched:** batches 50 and 500 on every branch;
+6. **Coverage gaps that no run has touched:** batches 50 and 500 on every branch;
    any run longer than 60 s, so no soak and no sustained-RSS figure;
    attribute-filtered walks, since `HOT_ATTRIBUTE_KEYS` is empty in the shipped
    compose file and the ordered partial-index path has therefore never been

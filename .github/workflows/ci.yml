@@ -32,10 +32,21 @@ jobs:
         with:
           node-version: 22.18.0
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      # The image runs Bun and executes TypeScript directly, so there is no
+      # build step to check and no dist/ to run. Type checking therefore has to
+      # happen here or nowhere: it is the only thing standing between a type
+      # error and production. Node is still installed for exactly this and for
+      # the tsx test runner.
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      # The suite is run again on the runtime that actually ships, because the
+      # two runners do not agree on everything -- Bun's own runner is what would
+      # catch a Bun-specific regression that tsx cannot see.
+      - run: bun test
       - run: docker build -t optimized-logger:test .
       - run: docker compose up -d --wait
       - run: npm run smoke
