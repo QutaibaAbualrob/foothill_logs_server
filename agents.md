@@ -4,12 +4,15 @@ You are working on this repository — a log-ingestion service (PostgreSQL, Dock
 Compose) built to a published project brief. This file is the map for humans and
 AI agents alike.
 
-**What ships is Express on Node 22.18**, and that is what a bare `docker compose
-up` gives you. Three other combinations exist on branches and are measured —
-Fastify on Node, Express on Bun, Fastify on Bun. None is merged. Check Status
-below before assuming which stack a number came from. Development and all current
-measurement happen on Linux; older results files were produced on Windows and say
-so.
+**What ships is Fastify on Bun 1.3.14** (merged 2026-08-18), and that is what a
+bare `docker compose up` gives you. The 2x2 that decided it — Express/Fastify by
+Node/Bun — is fully measured; the three losing cells survive as branches
+(`perf/fastify-node`, `perf/bun-runtime`, `perf/fastify-bun`) and are the source
+of the comparison numbers below. **Any number in this repository dated
+2026-08-17 or earlier describes Express on Node**, so check the date and the
+Status section before assuming which stack a figure came from. Development and
+all current measurement happen on Linux; older results files were produced on
+Windows and say so.
 
 ## Repository map
 
@@ -494,9 +497,11 @@ it. Two builds converging there is a real finding, not a failed run.
   `docker compose ps -q <service>` and fail loudly when it resolves to nothing
   (fixed on `main` 2026-08-18). Treat any resource or drill result taken on
   `main` before that date as unverified.
-- **Gates that must stay green:** 32/32 tests, `npm run smoke`, 73/73
+- **Gates that must stay green:** 34/34 tests on tsx with `TEST_DATABASE_URL`
+  set (66 pass on Bun's own runner), `npm run typecheck`, `npm run smoke`, 73/73
   reliability checks, the failure drill (all endpoints degrade to 503 +
   `Retry-After`, SIGTERM exits 0, acknowledged rows match the database).
+  `typecheck` is load-bearing since the Bun image has no build step.
 - **`bench/raw/` is gitignored** — `RESULT_PATH` must be a new file. Raw output
   and profiles are evidence: push them to the private analysis repo in the same
   session, or they are lost. See "Where measurement data lives" above.
