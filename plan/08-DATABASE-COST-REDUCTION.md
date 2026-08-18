@@ -248,6 +248,20 @@ both without giving up the open-loop default.
 
 ## CHANGES
 
+- 2026-08-18 (items 4-5 CLOSED): 12 runs at 120 s, three interleaved pairs each.
+  **`max_wal_size` 2 GB -> 8 GB REJECTED** — halves checkpoints (2 -> 1) and
+  cuts WAL 7.2%/row with separated bands, but throughput, both ingest
+  percentiles, drain and database CPU all overlap; WAL bandwidth is not the
+  constraint at a 96.2% buffer hit ratio. **`wal_buffers` 8 MB -> 16 MB
+  ADOPTED** as a stability change — ingest p95 -16.6%, effect is variance
+  collapse (throughput spread 25% at 8 MB vs 0.9% at 16 MB), evidence qualified
+  because the bands separate by only 0.5%. **This item's premise in §2.4 was
+  wrong**: a 60 s run never reaches the ~1,078 MB checkpoint trigger, so
+  checkpoints were not biting our runs at all. Also first observation of the
+  designed 503 shedding (~34% of a saturating offer) — invisible at 60 s. A
+  300 s variant exhausted the host disk. Evidence:
+  `docs/test_results/wal-tuning.md`, `bench/results/2026-08-18-wal-tuning/`.
+  Recorded as entry 13 in `docs/DESIGN-DECISIONS.md`.
 - 2026-08-18 (item 1 CLOSED): read half and write half both complete, 30 runs.
   **Decision: drop `logs_service_level_page_idx`, keep the attributes GIN**
   (migration `004`, commit `0933dcd`). The two indexes looked identical in the

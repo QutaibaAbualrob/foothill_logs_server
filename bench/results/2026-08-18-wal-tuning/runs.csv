@@ -1,0 +1,13 @@
+run,item,change,variant,side,batch,target_logs_s,load_seconds,rows_before,offered,accepted,logs_s,failed_requests,rejected,ingest_p95_ms,ingest_p99_ms,drain_pages_s,agg_p95_ms,agg_p99_ms,wal_bytes_per_row,checkpoints,pg_cpu_avg,pg_cpu_max,api_cpu_avg,read_errors,status
+item4-base2gb-run1,item4,max_wal_size,2GB,baseline,200,45000,120,0,6749000,4454000,29474.1,11475,0,1912.8,2859.3,12.47,265.2,302.4,596.9,2,71.6,101.2,46.9,0,verified
+item4-base2gb-run2,item4,max_wal_size,2GB,baseline,200,45000,120,0,6749800,4209600,27951,12701,0,2418.1,3508.0,11.7,268.7,968.5,588.9,2,69.1,94.3,46.9,0,verified
+item4-base2gb-run3,item4,max_wal_size,2GB,baseline,200,45000,120,0,6749800,4542600,30109.8,11036,0,1893.5,2249.6,12.93,283.1,581.6,586.2,2,74.1,103.4,46.9,0,verified
+item4-var8gb-run1,item4,max_wal_size,8GB,variant,200,45000,120,0,6749800,4393000,28802.9,11784,0,2012.4,2891.8,14.36,277.8,373.7,548.2,1,75.5,103.5,47.1,0,verified
+item4-var8gb-run2,item4,max_wal_size,8GB,variant,200,45000,120,0,6749800,4450600,29420.2,11496,0,2067.3,2802.2,9.77,364.2,401.6,548.2,1,67.5,97.8,46.7,0,verified
+item4-var8gb-run3,item4,max_wal_size,8GB,variant,200,45000,120,0,6749800,4559200,29974.5,10953,0,1955.7,3276.3,13.95,292.8,414.6,548.4,1,75.2,99.8,46.9,0,verified
+item5-base2gb-run1,item5,wal_buffers,8MB,baseline,200,45000,120,0,6749800,5165000,34215.8,7924,0,1691.4,1959.9,12.73,217.8,273.3,581.2,2,78.0,103.5,47.0,0,verified
+item5-base2gb-run2,item5,wal_buffers,8MB,baseline,200,45000,120,0,6749800,4147400,27406.1,13012,0,2362.6,2783.3,11.9,216.1,288.0,562.2,2,67.9,101.9,46.7,0,verified
+item5-base2gb-run3,item5,wal_buffers,8MB,baseline,200,45000,120,0,6749400,4582200,30346,10836,0,1886.4,2657.5,13.34,293.1,469.3,585.5,2,74.3,106.0,46.9,0,verified
+item5-var16mb-run1,item5,wal_buffers,16MB,variant,200,45000,120,0,6749800,5146600,34094.2,8016,0,1605.5,2106.0,11.7,273.2,330.4,581.4,2,77.1,101.1,47.0,0,verified
+item5-var16mb-run2,item5,wal_buffers,16MB,variant,200,45000,120,0,6749800,5085600,33775.4,8321,0,1667.1,2134.3,14.67,209.4,301.6,581.9,2,77.4,102.6,47.0,0,verified
+item5-var16mb-run3,item5,wal_buffers,16MB,variant,200,45000,120,0,6749800,5137600,34053.5,8061,0,1683.0,2046.1,13.04,398.7,503.1,581.5,2,77.5,103.8,47.2,0,verified

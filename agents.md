@@ -272,6 +272,33 @@ that is already finished. If a task turns out to be partly done, say which part.
   CPU stop being comparable** — at batch 200 absolute WAL looked unchanged while
   WAL *per row* fell 18.7%. Use `wal_bytes_per_row` in `runs.csv`.
 
+- [x] **WAL tuning measured: `wal_buffers` raised, `max_wal_size` left alone**
+  — 2026-08-18, items 4 and 5. `max_wal_size` 2 GB → 8 GB **rejected**: it
+  halves the checkpoint count and cuts WAL 7.2% per row (separated), but
+  throughput, both ingest percentiles, drain and database CPU all overlap — WAL
+  bandwidth is not the constraint at a 96.2% buffer hit ratio.
+  `wal_buffers` 8 MB → 16 MB **adopted** as a stability change: ingest p95
+  −16.6%, and the real effect is variance collapse (throughput spread 25% at
+  8 MB against 0.9% at 16 MB, with the 8 MB best run matching 16 MB). Evidence
+  is qualified — the p95 bands separate by 0.5%, inside session noise.
+  Evidence: `docs/test_results/wal-tuning.md`,
+  `bench/results/2026-08-18-wal-tuning/`.
+
+  **Two findings that outlast the verdicts, and change how runs are planned:**
+
+  1. **A 60 s run never triggers a size-driven checkpoint.** The trigger
+     distance is ~1,078 MB of WAL; 60 s at the 15,000 /s target produces
+     ~500 MB. The claim in `plan/08` that checkpoints were size-driven at
+     ~3.5 minutes and were biting our runs described something that **was not
+     happening**. Any future checkpoint work needs runs of 120 s or more.
+  2. **Sustained saturation sheds, and 60 s hid it.** At 120 s against a
+     45,000 /s offer the service refuses ~34% of requests — 503 backpressure
+     working as designed, `rejected: 0`, zero read errors. No earlier run was
+     long enough to reach it. Runs like this are **not** throughput numbers.
+
+  Host note: a 300 s variant **exhausted the disk** (3.64 GB WAL, 6.37M rows).
+  120 s is the longest run currently possible here.
+
 ### Next
 
 > **ACTIVE WORK — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
@@ -295,10 +322,16 @@ that is already finished. If a task turns out to be partly done, say which part.
 > HP's "never use hash indexes" verdict is 9.6-era, and PG10 made them
 > WAL-logged and crash-safe.
 >
-> Remaining in phase 1: items 4–5 (`max_wal_size` 2 GB → 8 GB with
-> `log_checkpoints`, and `wal_buffers = 16MB`) are two compose lines and should
-> go next; item 3 (binary `COPY`) is the largest piece of work and attacks the
-> server-side CSV parse inside the 71.3% owner.
+> **Items 4–5 are DONE** — see Status above. `wal_buffers = 16MB` is in the
+> shipped compose file; `max_wal_size` stays at 2 GB with the measurement
+> recorded inline so nobody re-proposes it.
+>
+> **Remaining in phase 1: item 3 (binary `COPY`) only**, and it is the largest
+> piece of work — `pg-copy-streams` has no binary mode, so the wire framing is
+> code we own. It attacks the server-side CSV parse inside the statement that
+> owns 71.3% of database time, and is the last item that reduces per-row
+> database cost without giving anything up. Item 2 remains blocked on the
+> harness emitting no mid-selectivity attribute key.
 >
 > **Phase 2 (items 6–9): measurement gaps, not tuning.** Explicitly **not
 > scheduled** until phase 1 reports: background-writer tuning (direction

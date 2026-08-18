@@ -23,6 +23,22 @@ services:
       - checkpoint_completion_target=0.9
       - -c
       - max_wal_size=2GB
+      # Measured 2026-08-18 and left at 2GB deliberately. Raising it to 8GB
+      # halves the checkpoint count (2 -> 1 per 120 s run) and cuts WAL by 7.2%
+      # per row, but moves nothing else: throughput, both ingest percentiles,
+      # drain and database CPU all overlap. WAL bandwidth is not the constraint
+      # here -- the database is CPU-bound at a 96.2% buffer hit ratio. See
+      # docs/test_results/wal-tuning.md.
+      #
+      # Default is 1/32 of shared_buffers = 8MB. Raised because at 8MB the
+      # ingest run intermittently stalls contending for WAL buffers: measured
+      # over three interleaved pairs, throughput spread was 25% at 8MB against
+      # 0.9% at 16MB, with the 8MB *best* run matching 16MB. Ingest p95 falls
+      # 16.6%. This is a stability change, not a throughput change, and the
+      # evidence is qualified -- see docs/test_results/wal-tuning.md. Costs 8MB
+      # of the 1GB container.
+      - -c
+      - wal_buffers=16MB
       - -c
       - jit=off
       - -c

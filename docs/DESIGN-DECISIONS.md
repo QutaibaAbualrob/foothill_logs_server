@@ -330,10 +330,52 @@ measured under sustained load), `scripts/capture-resources.mjs` and
 **Evidence:** `agents.md` "The measurement standard",
 `plan/05-BENCHMARK-PROTOCOL.md` §1.
 
+## 13. WAL settings: `wal_buffers` raised, `max_wal_size` deliberately not
+
+**Chosen:** `wal_buffers = 16MB` (default is 1/32 of `shared_buffers` = 8 MB).
+`max_wal_size` **stays at 2 GB**.
+**Rejected:** raising `max_wal_size` to 8 GB.
+**Why:** measured as two separate one-variable A/Bs, three interleaved pairs
+each, at 120 s of load.
+
+*`max_wal_size` 8 GB* does exactly what it promises and it is worthless here.
+It halves the checkpoint count (2 per run → 1) and cuts **WAL 7.2% per row**,
+separated bands — but throughput, both ingest percentiles, drain and database
+CPU all overlap. WAL bandwidth was never the constraint: the database is
+CPU-bound at a 96.2% buffer hit ratio with three `DataFileRead` samples in a
+whole run. Less WAL does not help a workload that is not waiting on WAL.
+
+*`wal_buffers` 16 MB* is adopted as a **stability change, not a throughput
+change**. Ingest p95 falls 16.6% with separated bands, but the mechanism is
+variance collapse: throughput spread is **25% at 8 MB against 0.9% at 16 MB**,
+and the 8 MB *best* run matches 16 MB. The run intermittently stalls contending
+for WAL buffers at the default.
+
+**Gives up:** 8 MB more shared memory inside the 1 GB container. And the
+evidence is thin — the p95 bands separate by 0.5%, inside the ~6% session noise,
+resting on the baseline's worst run. Adoption rests on every indicator agreeing,
+a coherent mechanism, and near-zero cost, not on any single number.
+
+**The larger finding is that the item's premise was wrong.** `plan/08` claimed
+checkpoints were size-driven at ~3.5 minutes and were biting our runs. The
+trigger distance is ~1,078 MB of WAL and **no 60 s run has ever reached it** —
+so every checkpoint claim in this project's history described something that was
+not happening. These are also the first runs longer than 60 s here, and they
+revealed the designed 503 backpressure shedding ~34% of a saturating offer,
+which no shorter run had ever exposed.
+
+**Verified by:** the setting is asserted from inside the running server on every
+run by the campaign guard; `npm run drill` and the reliability checks cover the
+shedding path (503 + `Retry-After`).
+**Evidence:** [`wal-tuning.md`](test_results/wal-tuning.md),
+`bench/results/2026-08-18-wal-tuning/`, `docker-compose.yml` (both settings
+carry their reasoning inline).
+
 ---
 
 ## CHANGES
 
+- 2026-08-18: entry 13 added (WAL settings, items 4 and 5).
 - 2026-08-18: created. Twelve entries assembled from the existing architecture,
   results and plan files, reorganised by decision rather than by component or
   date. Each entry links the test or gate that guards it and the measurement
