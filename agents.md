@@ -201,6 +201,29 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
+> **0. Measure the read path under concurrent ingest. This outranks everything
+> below it.**
+>
+> Every drain, page-latency and aggregate number in this repository — including
+> the 2026-08-18 walk and every figure in the 2×2 — was taken against a **static
+> table with no concurrent writers**. The service exists to serve queries *while*
+> it ingests; that condition has never been measured. The two are not close:
+> aggregate p95 is 73–83 ms on an idle stack, and the same endpoint under
+> sustained ingest has been observed in the seconds. A read path that is
+> application-limited at rest can be an order of magnitude slower when ingest is
+> competing for the same 0.5-CPU cap.
+>
+> Nothing below this line should be trusted as a prediction of behaviour under
+> load until a mixed-workload harness exists: ingest running continuously at
+> small (~33-log) batches while a cursor walk and aggregate queries run against
+> the same stack, reporting drain pages/s, page p50/p95, aggregate p95, and rows
+> written versus rows visible inside a fixed window. `scripts/drain.mjs` and
+> `scripts/benchmark.mjs` are the right models; neither does this today.
+>
+> This is also the honest frame for the framework/runtime question: a swap that
+> buys throughput while the read path stays slow can make the *product* worse,
+> because more accepted rows means more rows a reader must catch up on.
+
 **The open decision is what merges. For the Bun branches the throughput bar is
 met, the drain correctness gate is now met, and two adoption checks are not.**
 Merging on throughput evidence alone would still ship a stack CI has never built
@@ -354,6 +377,15 @@ it. Two builds converging there is a real finding, not a failed run.
   This cuts both ways: if a results file states a method its own evidence
   contradicts, fix the file and say so. (One was found on 2026-08-17 — see
   `docs/test_results/batch33-and-cpu-profile.md` §2.)
+- **Harness scripts must resolve containers from the compose project, never by
+  a hardcoded name.** `failure-drill.sh` and `capture-resources.mjs` both
+  hardcoded `server_loger-*`, which stopped matching when the working directory
+  was renamed. The drill then sent SIGTERM to a container that did not exist and
+  reported `unknown` — the shutdown gate was **vacuous, not passing**, and the
+  capture script recorded the wrong project's CPU. Both now use
+  `docker compose ps -q <service>` and fail loudly when it resolves to nothing
+  (fixed on `main` 2026-08-18). Treat any resource or drill result taken on
+  `main` before that date as unverified.
 - **Gates that must stay green:** 32/32 tests, `npm run smoke`, 73/73
   reliability checks, the failure drill (all endpoints degrade to 503 +
   `Retry-After`, SIGTERM exits 0, acknowledged rows match the database).
