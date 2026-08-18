@@ -97,14 +97,16 @@ let sequence = 0;
 let drainPages = 0;
 let drainRows = 0;
 let drainRestarts = 0;
+const batches = [];
 
 const SERVICES = ["checkout", "auth", "catalog", "payments"];
 const LEVELS = ["debug", "info", "warn", "error"];
 
 function body() {
   const request = sequence++;
-  const timestamp = new Date().toISOString();
-  return JSON.stringify({
+  const timestampMs = Date.now();
+  const timestamp = new Date(timestampMs).toISOString();
+  const payload = JSON.stringify({
     logs: Array.from({ length: batchSize }, (_, index) => ({
       timestamp,
       level: LEVELS[(request + index) % LEVELS.length],
@@ -113,6 +115,7 @@ function body() {
       attributes: { trace_id: `mixed-${request}-${index}`, region: "eu-west", retry: index % 3 },
     })),
   });
+  return { payload, timestampMs };
 }
 
 function percentile(values, fraction) {
@@ -127,10 +130,11 @@ function send() {
   inFlight += 1;
   requestsSent += 1;
   const started = performance.now();
+  const { payload, timestampMs } = body();
   return fetch(`${baseUrl}/logs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: body(),
+    body: payload,
   })
     .then(async (response) => {
       ingestLatencies.push(performance.now() - started);
@@ -140,7 +144,11 @@ function send() {
         return;
       }
       const result = await response.json();
-      accepted += result.accepted ?? 0;
+      const count = result.accepted ?? 0;
+      accepted += count;
+      // Kept against the batch's own timestamp so the visibility denominator can
+      // be restricted to exactly the rows the bounded walk was allowed to see.
+      batches.push({ timestampMs, accepted: count });
       rejected += Array.isArray(result.rejected) ? result.rejected.length : (result.rejected ?? 0);
     })
     .catch(() => {
@@ -260,9 +268,15 @@ async function sampleSeries(endAt) {
  * actually see inside a bounded window, counting only rows this run wrote. This is the number that matters to a
  * client: rows acknowledged but not yet visible are, from outside, missing.
  */
-async function measureVisibility(sinceIso, deadline) {
+async function measureVisibility(sinceIso, untilIso, deadline) {
   const query = new URLSearchParams(drainFilters);
   query.set("limit", String(pageSize));
+  // Both bounds matter. `since` excludes rows left by an earlier run; `until`
+  // excludes rows written *during* this walk, which would otherwise be counted
+  // in the numerator while the denominator stayed frozen -- that is how an
+  // earlier version reported 100.1% visible. builder.ts applies [since, until),
+  // and the denominator below uses the same half-open window.
+  query.set("until", untilIso);
   // Scoped to rows this run produced. Without it the walk counts whatever was
   // already in the table and the ratio becomes meaningless -- a validation run
   // against a table left over from the failure drill reported 303,000 visible
@@ -296,7 +310,15 @@ async function measureVisibility(sinceIso, deadline) {
     }
   }
   const elapsed = visibilityWindowSeconds * 1000 - (deadline - performance.now());
-  return { visible, pages, reachedEnd, elapsedSeconds: Number((elapsed / 1000).toFixed(3)) };
+  return {
+    visible,
+    pages,
+    reachedEnd,
+    // "the reader ran out of clock" and "there was nothing more to read" are
+    // different outcomes and must not both read as a bare percentage.
+    limitedBy: reachedEnd ? "data" : "window",
+    elapsedSeconds: Number((elapsed / 1000).toFixed(3)),
+  };
 }
 
 const startedAtIso = new Date().toISOString();
@@ -304,7 +326,7 @@ const startedAt = performance.now();
 const endAt = startedAt + durationSeconds * 1000;
 const visibilityEndAt = endAt + visibilityWindowSeconds * 1000;
 
-let acceptedAtLoadEnd = 0;
+let cutoffMs = 0;
 let visibility;
 
 await Promise.all([
@@ -318,12 +340,18 @@ await Promise.all([
     while (performance.now() < endAt) await new Promise((r) => setTimeout(r, 25));
     // Rows acknowledged before the walk begins are the ones a reader should be
     // able to find; anything accepted during the walk is a moving target.
-    acceptedAtLoadEnd = accepted;
-    visibility = await measureVisibility(startedAtIso, visibilityEndAt);
+    cutoffMs = Date.now();
+    visibility = await measureVisibility(startedAtIso, new Date(cutoffMs).toISOString(), visibilityEndAt);
   })(),
 ]);
 
 const loadElapsedSeconds = (performance.now() - startedAt) / 1000;
+// Computed after every in-flight request has settled, so a batch dispatched
+// just before the cutoff is counted on both sides rather than only in the walk.
+const startMs = Date.parse(startedAtIso);
+const acceptedInWindow = batches
+  .filter((b) => b.timestampMs >= startMs && b.timestampMs < cutoffMs)
+  .reduce((total, b) => total + b.accepted, 0);
 
 const offeredLogs = (requestsSent + shed) * batchSize;
 const result = {
@@ -380,11 +408,13 @@ const result = {
     windowSeconds: visibilityWindowSeconds,
     underLoad: visibilityUnderLoad,
     scopedSince: startedAtIso,
-    acceptedLogs: acceptedAtLoadEnd,
+    scopedUntil: new Date(cutoffMs).toISOString(),
+    limitedBy: visibility.limitedBy,
+    acceptedLogs: acceptedInWindow,
     visibleLogs: visibility.visible,
-    missingLogs: Math.max(0, acceptedAtLoadEnd - visibility.visible),
+    missingLogs: Math.max(0, acceptedInWindow - visibility.visible),
     visibleRatio:
-      acceptedAtLoadEnd === 0 ? null : Number((visibility.visible / acceptedAtLoadEnd).toFixed(4)),
+      acceptedInWindow === 0 ? null : Number((visibility.visible / acceptedInWindow).toFixed(4)),
     pagesWalked: visibility.pages,
     reachedEnd: visibility.reachedEnd,
     elapsedSeconds: visibility.elapsedSeconds,

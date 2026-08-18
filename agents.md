@@ -201,38 +201,56 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
-> **0. The read path collapses under concurrent ingest — measured 2026-08-18.**
+> **0. The read path collapses under concurrent ingest — and Fastify + Bun is
+> the fix. Measured 2026-08-18.**
 >
-> `scripts/mixed-workload.mjs` (`npm run bench:mixed`) now measures it, and the
-> result reframes the project: on `main`, drain runs at **0.95–1.41 pages/s
-> while ingest is running, against 37–54 pages/s idle** — a 26–50× collapse.
-> Aggregate p95 goes from 73–83 ms idle to 842–1,082 ms, p99 to 13.6 s. Inside a
-> 30 s catch-up window a client sees **13.7% of acknowledged rows**; the rest are
-> accepted but not yet findable. The api container is pinned at its 0.5-CPU cap
-> while postgres holds two thirds of its own in reserve, so the constraint is
-> **application CPU**, not the database. In the 5 s series the reader completes
-> **zero pages for ~15 consecutive seconds**. Evidence:
-> `docs/test_results/mixed-workload-baseline.md`.
+> `scripts/mixed-workload.mjs` (`npm run bench:mixed`) measures reads while
+> writes are running, which nothing here did before. Three interleaved pairs,
+> clean volume per run, build verified in-container, 15,000 logs/s target at
+> batch 33:
 >
-> Consequences for what is already recorded: every other read number in this
-> repo — the 2×2's drain figures, the page-latency targets, the 2026-08-18 walk
-> — was taken against a **static table**, and so describes a condition the
-> service never operates in. The drain *correctness* gate still stands; the page
-> *rate* recorded beside it does not transfer. And **ingest optimisation alone
-> can make the product worse**: accepting more rows per second while the page
-> rate sits near 1/s lengthens the backlog a reader must traverse.
+> | | Express + Node | Fastify + Bun |
+> | --- | ---: | ---: |
+> | drain under load | 0.96–1.09 pages/s | **19.6–21.7** |
+> | page p95 | 802–897 ms | 86–90 ms |
+> | aggregate p95 | 617–2,318 ms | 86–217 ms |
+> | visible in 30 s | 14.5–15.3% | **99.6–99.8%** |
+> | limited by | window (out of clock) | **data (walked everything)** |
+> | ingest | 8,030–8,896 logs/s | 14,919–14,989 |
+> | api / postgres CPU | 46% pinned / 28–33% | 45% / **72–76%, peaks >100%** |
 >
-> Two properties of the harness are load-bearing, and a replacement must keep
-> them. Its ingest is **open-loop** — dispatched on a clock, not on completions
-> — because a closed-loop client throttles itself when the server slows, so no
-> backlog forms and the effect stays invisible. And visibility is measured
-> **while writes continue**: against a quiesced server the same build reports
-> 100% visible instead of 13.7%.
+> Evidence: `docs/test_results/mixed-workload-baseline.md`.
 >
-> The open question is therefore no longer "is Fastify + Bun faster at ingest"
-> but **"does it lift the read path under load"** — it halves per-request
-> application cost, which is exactly the pinned resource. Run this harness
-> against it before deciding anything else.
+> **Three things follow, and they change earlier conclusions in this file.**
+>
+> 1. **Every other read number here was taken against a static table** — the
+>    2×2's drain figures, the page-latency targets, the 2026-08-18 walk — and so
+>    describes a condition the service never operates in. The drain *correctness*
+>    gate stands; the page *rate* beside it does not transfer.
+> 2. **The throughput-versus-freshness tension does not survive contact with the
+>    measurement.** The worry was that accepting more rows leaves a reader
+>    further behind. Fastify + Bun accepts ~1.75× more and still makes 99.7%
+>    visible against Express's 14.8%: the two were only in tension because the
+>    reader was losing a CPU fight it now wins.
+> 3. **The constraint has moved to PostgreSQL** (72–76%, peaks over its 1.0 cap,
+>    against 28–33% before). Application-side tuning now has far less headroom,
+>    and the write-path index question should be re-judged in this harness rather
+>    than in isolation.
+>
+> The gain is ~19×, not the ~2× a per-request cost model predicts, because the
+> Express baseline was **starved** rather than slow — its 5 s series shows the
+> reader completing zero pages for ~15 consecutive seconds. Freeing app CPU ended
+> the starvation; it is a regime change, not a speed-up. Do not extrapolate
+> either direction from idle-table numbers.
+>
+> Two properties of the harness are load-bearing and a replacement must keep
+> them: ingest is **open-loop** (dispatched on a clock, not on completions — a
+> closed-loop client throttles itself when the server slows, so no backlog forms
+> and the effect is invisible), and visibility is measured **while writes
+> continue** (against a quiesced server the Express build reports 100% visible
+> instead of ~15%). The visibility ratio is a bounded cohort: the walk is
+> `since`+`until`-bounded and the denominator covers the same half-open window,
+> after an earlier version reported an impossible 100.1%.
 
 **The open decision is what merges. For the Bun branches the throughput bar is
 met, the drain correctness gate is now met, and two adoption checks are not.**
