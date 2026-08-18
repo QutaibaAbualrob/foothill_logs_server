@@ -1,8 +1,15 @@
 # agents.md — start here
 
-You are working on `E:\server_loger` — a log-ingestion service (Express +
-PostgreSQL, Docker Compose) built to a published project brief. This file is
-the map for humans and AI agents alike.
+You are working on this repository — a log-ingestion service (PostgreSQL, Docker
+Compose) built to a published project brief. This file is the map for humans and
+AI agents alike.
+
+**What ships is Express on Node 22.18**, and that is what a bare `docker compose
+up` gives you. Three other combinations exist on branches and are measured —
+Fastify on Node, Express on Bun, Fastify on Bun. None is merged. Check Status
+below before assuming which stack a number came from. Development and all current
+measurement happen on Linux; older results files were produced on Windows and say
+so.
 
 ## Repository map
 
@@ -136,7 +143,7 @@ that is already finished. If a task turns out to be partly done, say which part.
   `scripts/failure-drill.sh` and `scripts/capture-resources.mjs` each hardcoded
   container names while every other docker call in them follows
   `COMPOSE_PROJECT_NAME`. The capture one is the dangerous one — it does not
-  fail, it reports the other project's CPU and RSS as this run's.
+  fail, it reports the other compose project's CPU and RSS as this run's.
 
 - [x] **Fastify + Bun, the fourth cell** — 2026-08-17, branch `perf/fastify-bun`
   at `cc4b75b` (`68766fe` cherry-picked onto `perf/bun-runtime`, with a
@@ -159,31 +166,81 @@ that is already finished. If a task turns out to be partly done, say which part.
 
   The runtime is the larger effect by an order of magnitude, at both batch sizes.
 
+  ⚠️ **`perf/fastify-bun` had no upstream as of 2026-08-18** — unlike the other
+  two branches, its commit and all of its evidence are single-copy on one
+  machine. That is exactly what the data obligation above forbids. Push it.
+
 ### Next
 
-1. **Profile the read/drain path.** Only ingest has been profiled. The worst
-   outstanding miss is on the read side — drain page p95 87 ms against an 8 ms
-   target — and that path serialises 1,000-row JSON pages, which is where a
-   framework swap makes its largest claim. Until this exists, the framework
-   question is only half answered.
+**The open decision is what merges, and for the Bun branches the throughput bar
+is met while three adoption checks are not.** Merging on throughput evidence
+alone would ship a stack no gate in this repo has exercised end to end. The
+decision stays the owner's; what follows are its prerequisites, in order.
 
-2. **Decide what merges** (owner's call — the measurement bar is met for all
-   three branches): `perf/fastify-node` (framework only), `perf/bun-runtime`
-   (runtime only), `perf/fastify-bun` (both). The runtime is the larger effect by
-   an order of magnitude and is the only change that clears 15,000 logs/s. If
-   anything merges, the drain A/B in item 1 should be taken against the merged
-   code, since **neither** swap's effect on the read path is measured.
+1. **Walk the cursor drain on Fastify + Bun at scale — correctness gate, blocks
+   the rest.** `npm run bench:drain` (`scripts/drain.mjs`) is a correctness gate
+   as much as a benchmark: it hard-fails on duplicate rows, ordering violations,
+   a walk that stops short of the true end, and a unique-row count that does not
+   match `EXPECT_TOTAL` (`scripts/drain.mjs:147-160`). It has caught a real
+   defect once — **18 ordering violations across 599,635 rows**, from sort
+   columns that were not table-qualified (`plan/HANDOFF.md:90`). It only diverges
+   where a tied timestamp group straddles a digit-length boundary (9→10,
+   999999→1000000), so no small fixture reproduces it and **neither the 73/73
+   reliability matrix nor the failure drill substitutes for this walk.**
 
-3. **Allocation reduction remains the largest single ingest target**, and it is
-   independent of the framework: `computeRollups` (9.6% of on-CPU) and `csv`
-   (5.2%) both build strings and objects per log, feeding the ~34% GC cost.
+   **Bun changes the runtime beneath `pg`; Fastify changes response
+   serialisation. Both sit directly on this path, and the walk has been run on
+   neither.** Seed to ~1M rows or more and require all four: 0 duplicates, 0
+   ordering violations, `reachedEnd: true`, and unique rows equal to `COUNT(*)`.
 
-4. **Optional:** re-test Fastify with response schemas, which neither Fastify
+2. **Make CI build and test what would actually ship.**
+   `.github/workflows/ci.yml` pins `node-version: 22.18.0`, then runs `npm ci`,
+   `npm test` (`tsx --test` — Node's runner), `npm run build` (tsc → `dist/`),
+   `docker build -t optimized-logger:test .` against the Node `Dockerfile`, and
+   `docker compose up -d --wait` + `npm run smoke` against the Node compose file.
+   **Under Bun every one of those validates a path nothing runs:** the tsc output
+   is never executed, and the image CI smokes is not the image serving traffic.
+   `Dockerfile.bun` deliberately moved type checking out of the image into
+   `npm run typecheck`, so under Bun that gate turns load-bearing rather than
+   redundant and must stay. Bun also has its own runner (64 pass on the fourth
+   cell) — decide whether CI runs one or both.
+
+3. **Make Bun the default, then re-verify zero-config startup (G0).**
+   `docker-compose.bun.yml` states in its own header that it is an **overlay**,
+   applied as `COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml` and never
+   instead of the base file; it also expects a distinct `COMPOSE_PROJECT_NAME`
+   and a non-colliding `HOST_PORT`. Adopting means a bare `docker compose up`
+   yields Bun: fold the `dockerfile:` override, the `NODE_OPTIONS: ""` clearing
+   and the bun healthcheck into the base files, then verify from a clean volume
+   on port 8080.
+
+**One adoption check is already clear — do not spend a session repeating it.**
+Peak api RSS on Bun + Fastify is **91.3–105.8 MiB against the 256 MiB limit**
+(~41% of cap at worst) across six 60 s runs
+(`bench/raw/fb-b*-fastify-run*-resources.csv`), with Bun + Express at
+100–100.9 MiB — roughly 2× Node's 51.9 MiB and comfortably inside the cap. Bun's
+JavaScriptCore heap takes no `--max-old-space-size` equivalent, so `mem_limit` is
+the only ceiling and peak RSS is the number to watch: watch it in runs you are
+already taking. **No run longer than 60 s exists on any branch**, so sustained
+RSS under a soak is still open.
+
+4. **Drain page latency is the worst outstanding miss** — page p95 87 ms against
+   an 8 ms target — and only the ingest path has been profiled. That path
+   serialises 1,000-row JSON pages, which is where a framework swap makes its
+   largest claim, so the framework question is half answered until this exists.
+   This is the *performance* half of item 1; both want the same harness run, but
+   only the correctness half blocks a merge.
+
+5. **Allocation reduction remains the largest single ingest target**, and it is
+   independent of both swaps: `computeRollups` (9.6% of on-CPU) and `csv` (5.2%)
+   build strings and objects per log, feeding the ~34% GC cost.
+
+6. **Optional:** re-test Fastify with response schemas, which neither Fastify
    branch declares — that is where its serialisation advantage lives, so both
    Fastify numbers are floors rather than ceilings.
 
-5. **Batches 50 and 500 are unmeasured on every branch.** So is peak RSS on Bun,
-   and so is any run longer than 60 s.
+7. **Batches 50 and 500 are unmeasured on every branch**, as is any run longer
+   than 60 s.
 
 ## The path after the measurement (owner decision, 2026-08-17)
 
@@ -269,7 +326,6 @@ it. Two builds converging there is a real finding, not a failed run.
 - **Gates that must stay green:** 32/32 tests, `npm run smoke`, 73/73
   reliability checks, the failure drill (all endpoints degrade to 503 +
   `Retry-After`, SIGTERM exits 0, acknowledged rows match the database).
-- **Native Windows paths for Python** — MSYS `/e/...` paths fail silently.
 - **`bench/raw/` is gitignored** — `RESULT_PATH` must be a new file. Raw output
   and profiles are evidence: push them to the private analysis repo in the same
   session, or they are lost. See "Where measurement data lives" above.
