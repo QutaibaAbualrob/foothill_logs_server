@@ -468,7 +468,7 @@ the "is it worth it" gate below, not a substitute for it.
 ## The measurement standard — what counts as evidence here
 
 Any A/B that informs a merge, a revert, or a claim in a results file must meet
-**all seven** of these. A run that misses one is a screen, not evidence: label it
+**all eight** of these. A run that misses one is a screen, not evidence: label it
 as such and do not put its number in a headline.
 
 1. **Interleaved.** Alternate the two builds — A, B, A, B, A, B. Never all of A
@@ -497,6 +497,16 @@ as such and do not put its number in a headline.
    and after, and both containers' CPU average and maximum. A cell with non-zero
    errors is not a throughput number.
 
+8. **Pair the sides.** Any change to the write path reports a read-path number
+   too, and any change to the read path reports ingest and WAL. A structure
+   removed from ingestion is almost always paying for some query shape, and a
+   structure added for queries is almost always write amplification — one side
+   alone is a number, not a decision. Measure the paired side **against the
+   shape the structure actually serves**: the default workload here is an
+   *unfiltered* cursor walk, which touches none of the filtered-read structures
+   and will happily report no regression while a filtered read collapses.
+   Protocol detail and the pairing table: `plan/05-BENCHMARK-PROTOCOL.md` §1.9.
+
 **Measured noise, for calibration:** ~6% for a repeated build within a session,
 ~11% across sessions. Never compare against a number from an earlier session.
 
@@ -518,6 +528,13 @@ it. Two builds converging there is a real finding, not a failed run.
   the new next step written out. This file is the map; a stale map sends the
   next agent to redo finished work.
 - **CHANGES sections in docs are append-only.** Add entries, never rewrite.
+- **Never ship a one-sided measurement.** A write-path result without its
+  read-path pair (or the reverse) is not a decision and must not be written up
+  as one. This was added 2026-08-18 after a screen showed dropping two indexes
+  cut PostgreSQL CPU 30% and WAL 56% — a result that says nothing at all about
+  whether those indexes could be dropped, because the workload that produced it
+  never ran the filtered reads they exist to serve. See the measurement standard
+  §8 and `plan/05-BENCHMARK-PROTOCOL.md` §1.9.
 - **Every claim must trace to a file on disk.** No number without a source.
   This cuts both ways: if a results file states a method its own evidence
   contradicts, fix the file and say so. (One was found on 2026-08-17 — see

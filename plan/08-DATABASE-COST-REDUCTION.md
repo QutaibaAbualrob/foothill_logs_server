@@ -221,8 +221,20 @@ both without giving up the open-loop default.
   number that informs a decision.** Interleaved, ≥3 repeats per side, clean
   volume, build verified in-container, one stack up at a time, report the
   spread. A run missing one of these is a screen, not evidence.
-- **Both halves or no decision.** Any index change reports its read cost as
-  well as its write gain.
+- **Both halves or no decision — now a repository-wide rule.** Any index change
+  reports its read cost as well as its write gain. Generalised on 2026-08-18
+  into the measurement standard (`agents.md` §8) and
+  `plan/05-BENCHMARK-PROTOCOL.md` §1.9: **every write-path change is measured on
+  the read path too, and the reverse.** Two further points that cost real time
+  here:
+  - **Test the shape the structure serves, not the default workload.** The
+    default mixed workload is an *unfiltered* cursor walk. It uses neither the
+    `(service, level, ...)` index nor the attribute GIN, so it reports no
+    regression when either is removed. A service index is tested with a service
+    filter; an attribute index with the selective lookup that justified it.
+  - **Screen the cheap side first, then measure the other side before refining
+    the first.** Precision on a side that cannot change the decision is not
+    worth runs.
 - **Do not "fix" a disappointing number. Record it.** Two predictions were
   overturned by measurement on 2026-08-17/18 and both are recorded in
   `agents.md`; that is the standard.
@@ -236,6 +248,20 @@ both without giving up the open-loop default.
 
 ## CHANGES
 
+- 2026-08-18 (stage 0 screen): both indexes dropped together, batch 33,
+  unfiltered walk, 3 interleaved pairs. **PostgreSQL CPU avg 77.0-79.6% ->
+  54.2-55.1% (-30.3%), WAL 901 MB -> 394 MB (-56.3%), ingest p95 470-572 ms ->
+  332-368 ms (-32.7%)**, all with non-overlapping bands against ~6% session
+  noise; api CPU unchanged and heap size identical, so the same data was
+  written. Two variables at once by design: a **screen, not evidence**.
+  **Ingest throughput did not move (both sides ~14,990 logs/s)** because the
+  harness offers a fixed 15,000 logs/s target and both sides met it with zero
+  shed — a write-cost reduction has nowhere to appear as throughput unless the
+  offered rate exceeds what the service can serve. Stage 1's write matrix
+  therefore needs a saturation ramp before its four cells. Drain rate and
+  visibility bands overlap and are not claimed; aggregate p95 read ~20% worse
+  on the dropped side with heavily overlapping bands, i.e. noise, but stage 1
+  should watch it. Raw: `bench/raw/stage0/`.
 - 2026-08-18: created. Phase 1 (items 1–5) planned after
   `docs/test_results/postgres-profile.md` moved the constraint onto PostgreSQL;
   phase 2 (items 6–9) recorded but explicitly not scheduled. Items 5 and 6 carry

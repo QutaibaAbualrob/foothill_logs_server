@@ -26,6 +26,28 @@ this project follows.
    both.
 8. **Record losing results.** An experiment that made things worse is evidence
    and belongs in the log.
+9. **Every write-path change is measured on the read path too, and the reverse.**
+   A change that removes work from ingestion almost always moves cost onto
+   queries, and a change that speeds queries almost always adds write
+   amplification. Measuring one side alone produces a number that looks like a
+   win and is not a decision. Pair them explicitly:
+
+   | Change touches | Must also report |
+   | --- | --- |
+   | Indexes, schema, `COPY`, WAL, batching | The query shape the changed structure exists to serve |
+   | Query plans, added indexes, caching | Ingest throughput or latency, and WAL volume |
+
+   Run the paired test **against the specific shape the structure serves**, not
+   the default workload — the default here is an unfiltered cursor walk, which
+   uses none of the filtered-read structures and will report no regression no
+   matter what is removed. Choosing the right shape is part of the measurement:
+   an index on `(service, ...)` is tested with a service filter; an attribute
+   index is tested with the selective attribute lookup it was justified by.
+
+   **Sequencing:** when a change is cheap to screen on one side, screen there
+   first to learn whether the effect exists at all — then measure the other side
+   *before* refining the first. The paired result decides; extra precision on a
+   side that cannot change the decision does not.
 
 ---
 
