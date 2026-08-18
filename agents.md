@@ -331,30 +331,62 @@ equivalent, so `mem_limit` is the only ceiling: watch peak RSS in runs you are
 already taking. **No run longer than 60 s exists on any branch**, so sustained
 RSS under a soak is still open.
 
-3. **Drain page latency is still the worst outstanding miss** — page p95
-   40–50 ms against an 8 ms target on Fastify + Bun (2026-08-18), 87 ms on `main`
-   in an earlier session. Those two numbers are **not comparable**: different
-   builds, different sessions, different table sizes. **The A/B has not been
-   run.** What the 2026-08-18 walk did establish is that the path is
-   *application-limited* — api pinned at its 0.5-CPU cap while postgres keeps
-   over half of its own in reserve at a 99.4% buffer hit ratio — so the cost is
-   in serialising 1,000-row JSON pages, exactly where a framework swap makes its
-   largest claim. The headroom is real; what either swap does with it is
-   unmeasured. Take it interleaved, three per side, to the standard below.
+3. **Drain page latency — the A/B has now been run, under load. What remains is
+   the idle comparison and the target itself.** Item 0 settles the version that
+   matters: under concurrent ingest, page p95 is 86–90 ms on Fastify + Bun
+   against 802–897 ms on Express + Node, interleaved three per side. Do **not**
+   re-run that as new work.
 
-4. **Only the ingest path has been CPU-profiled.** The read path has resource
-   numbers now but no profile, so *which* frames own that ~50% is unknown.
+   Two things are still genuinely open here:
 
-5. **Allocation reduction remains the largest single ingest target**, and it is
-   independent of both swaps: `computeRollups` (9.6% of on-CPU) and `csv` (5.2%)
-   build strings and objects per log, feeding the ~34% GC cost.
+   - **The idle-table A/B was never run interleaved.** The recorded idle figures
+     — 40–50 ms on Fastify + Bun (2026-08-18), 87 ms on `main` in an earlier
+     session — remain **not comparable**: different builds, different sessions,
+     different table sizes. It is now low value, because the idle condition is
+     not the one the service operates in, but do not quote those two numbers
+     against each other in the meantime.
+   - **The 8 ms target is unmet in every condition measured**, idle or loaded,
+     on either stack. Nothing so far has attacked it directly; the gains to date
+     came from removing CPU starvation, not from making a page cheaper to
+     serialise.
 
-6. **Optional:** re-test Fastify with response schemas, which neither Fastify
+   The earlier claim in this slot that the path is *application-limited* held for
+   Express. It no longer describes Fastify + Bun, where the api sits at 45% of
+   its cap and **postgres carries 72–76% with peaks over its own** — so further
+   page-latency work belongs in the database, or in the response shape, not in
+   the HTTP layer. Response schemas (item 6) are the one untried application-side
+   lever.
+
+4. **PostgreSQL is now the constraint — profile it.** This is the top technical
+   item after the merge. On Fastify + Bun under mixed load the api sits at 45% of
+   its 0.5 cap while **postgres runs 72–76% with peaks over its own 1.0 cap**;
+   on Express it was the reverse (api pinned, postgres 28–33%). Every remaining
+   application-side idea is now aimed at the component with headroom to spare.
+   Nothing here has ever profiled the database — no `pg_stat_statements`, no
+   `EXPLAIN (ANALYZE, BUFFERS)` under concurrent load, no wait-event sampling.
+
+5. **The read path has never been CPU-profiled.** Only ingest has. It now has
+   resource numbers but no profile, so which frames own its cost is unknown.
+   Take it on the stack that ships — and note Bun's profiler is not V8's, so the
+   `.cpuprofile` tooling used for the ingest profile does not transfer directly.
+
+6. **Allocation reduction is an ingest target, but no longer clearly the largest
+   one.** `computeRollups` (9.6% of on-CPU) and `csv` (5.2%) do build strings and
+   objects per log, feeding the ~34% GC cost — **but every one of those figures
+   comes from the V8 profile of Express on Node**, and describes a stack that may
+   not ship. Bun's collector is JavaScriptCore's and the profile does not carry
+   over. Re-measure before treating these numbers as current.
+
+7. **Optional:** re-test Fastify with response schemas, which neither Fastify
    branch declares — that is where its serialisation advantage lives, so both
-   Fastify numbers are floors rather than ceilings.
+   Fastify numbers are floors rather than ceilings. This is now the one untried
+   application-side lever on page latency.
 
-7. **Batches 50 and 500 are unmeasured on every branch**, as is any run longer
-   than 60 s.
+8. **Coverage gaps that no run has touched:** batches 50 and 500 on every branch;
+   any run longer than 60 s, so no soak and no sustained-RSS figure;
+   attribute-filtered walks, since `HOT_ATTRIBUTE_KEYS` is empty in the shipped
+   compose file and the ordered partial-index path has therefore never been
+   exercised.
 
 ## The path after the measurement (owner decision, 2026-08-17)
 
