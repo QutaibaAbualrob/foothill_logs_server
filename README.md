@@ -1,6 +1,6 @@
 # Optimized Log Ingestion Service
 
-A TypeScript log-ingestion service on Node 22, Express 5, and PostgreSQL 16.
+A TypeScript log-ingestion service on Bun 1.3.14, Fastify 5, and PostgreSQL 16.
 Clients post batches of logs to `POST /logs`; every entry is validated
 independently (rejections carry the original array index, so one bad entry
 never rejects its valid siblings), and accepted rows are **group-committed**:
@@ -86,6 +86,7 @@ startup error, never silently replaced by a default.
 | `BODY_LIMIT` | `4mb` | Maximum accepted request body; larger bodies get `413` |
 | `SYNC_COMMIT` | `off` | Durability profile: `off` = commit without waiting for a WAL flush (see [Durability](#durability)); `on` = strictly crash-durable acknowledgement |
 | `RETENTION_DAYS` | `30` | How long logs are kept |
+| `MAX_LOG_AGE_DAYS` | `0` (off) | Reject logs older than this at ingest. Off by default: refusing a backfill is a change to the ingest contract, so it is opt-in rather than implied by `RETENTION_DAYS` |
 | `RETENTION_INTERVAL_MS` | `3600000` | Cadence of retention passes (1 hour) |
 | `RETENTION_BATCH_ROWS` | `5000` | Rows per boundary-sweep `DELETE` batch |
 | `BATCH_DELAY_MS` | `5` | How long an idle writer waits to gather companions for a lone request. Rows arriving while a flush runs never wait on this — they leave in the next flush, which always takes the whole queue |
@@ -873,9 +874,13 @@ either way.
   ordering or cursor logic, run `npm run bench:drain` with `EXPECT_TOTAL` set;
   duplicates, ordering violations, or a mismatched row count fail the run.
 - **CI** (`.github/workflows/ci.yml`, runs on every push and PR): on
-  `ubuntu-latest` with a PostgreSQL 16.4 service container — `npm ci`,
-  `npm run typecheck`, `npm test`, `npm run build`, `docker build`,
-  `docker compose up -d --wait`, `npm run smoke`, then `docker compose down -v`.
+  `ubuntu-latest` with a PostgreSQL 16.4 service container, installing **both
+  runtimes** — `npm ci`, `npm run typecheck`, `npm test` (tsx), `bun test`,
+  `docker build`, `docker compose up -d --wait`, `npm run smoke`, then
+  `docker compose down -v`. There is no build step: the image runs TypeScript
+  directly, so `npm run typecheck` is the only thing between a type error and
+  production, and both test runners are exercised because they do not agree on
+  everything.
 
 ---
 
