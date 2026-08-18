@@ -166,34 +166,48 @@ that is already finished. If a task turns out to be partly done, say which part.
 
   The runtime is the larger effect by an order of magnitude, at both batch sizes.
 
-  ⚠️ **`perf/fastify-bun` had no upstream as of 2026-08-18** — unlike the other
-  two branches, its commit and all of its evidence are single-copy on one
-  machine. That is exactly what the data obligation above forbids. Push it.
+  The single-copy warning that stood here is **cleared**: `perf/fastify-bun` is
+  pushed and in sync with `origin/perf/fastify-bun` as of 2026-08-18, as are the
+  other three branches.
+
+- [x] **Cursor drain walk on Fastify + Bun at 1.5M rows** — 2026-08-18, branch
+  `perf/fastify-bun` at `592e17a`. The correctness gate that blocked the
+  adoption decision. Three walks over a **1,511,600-row** table — unfiltered,
+  `service=payments`, and an unfiltered repeat — each returned **0 duplicates, 0
+  ordering violations, `reachedEnd: true`, and unique rows equal to `COUNT(*)`**.
+  Stack verified in-container: `bun run src/index.ts`, Bun 1.3.14, `fastify` and
+  not `express`. Evidence: `docs/test_results/drain-fastify-bun.md` and
+  `bench/results/2026-08-18-fastify-bun-drain/` on that branch.
+
+  The dataset actually crosses the boundary the gate exists for: a **400-row
+  tied-timestamp group spanning ids 999,801–1,000,200**, five such straddling
+  groups in all. A walk that stopped below a million rows would not have tested
+  it.
+
+  **New finding — the drain path is application-limited, not database-limited.**
+  Over the captured walk the api container is pinned at 46.5% avg / 51.1% max of
+  its 50% cap while postgres keeps well over half of its own in reserve, at a
+  99.4% buffer hit ratio. The cost of a page is in the application, serialising
+  1,000 rows of JSON. That is where a framework swap makes its largest claim, so
+  the headroom for the read-path A/B is real — this run does **not** say what
+  either swap does with it.
+
+  **Page latency here is a screen, not a comparison.** No Node baseline was taken
+  in the session, and the two identical unfiltered walks differ by 26% between
+  themselves (35.1 s and 27.9 s, warming cache). Page p50/p95/p99 landed at
+  14.6–18.3 / 40.0–49.6 / 76.8–82.8 ms. Do not set these against the 87 ms
+  recorded for `main` earlier — different build, different session, different
+  table size.
 
 ### Next
 
-**The open decision is what merges, and for the Bun branches the throughput bar
-is met while three adoption checks are not.** Merging on throughput evidence
-alone would ship a stack no gate in this repo has exercised end to end. The
-decision stays the owner's; what follows are its prerequisites, in order.
+**The open decision is what merges. For the Bun branches the throughput bar is
+met, the drain correctness gate is now met, and two adoption checks are not.**
+Merging on throughput evidence alone would still ship a stack CI has never built
+or smoked. The decision stays the owner's; what follows are its prerequisites,
+in order.
 
-1. **Walk the cursor drain on Fastify + Bun at scale — correctness gate, blocks
-   the rest.** `npm run bench:drain` (`scripts/drain.mjs`) is a correctness gate
-   as much as a benchmark: it hard-fails on duplicate rows, ordering violations,
-   a walk that stops short of the true end, and a unique-row count that does not
-   match `EXPECT_TOTAL` (`scripts/drain.mjs:147-160`). It has caught a real
-   defect once — **18 ordering violations across 599,635 rows**, from sort
-   columns that were not table-qualified (`plan/HANDOFF.md:90`). It only diverges
-   where a tied timestamp group straddles a digit-length boundary (9→10,
-   999999→1000000), so no small fixture reproduces it and **neither the 73/73
-   reliability matrix nor the failure drill substitutes for this walk.**
-
-   **Bun changes the runtime beneath `pg`; Fastify changes response
-   serialisation. Both sit directly on this path, and the walk has been run on
-   neither.** Seed to ~1M rows or more and require all four: 0 duplicates, 0
-   ordering violations, `reachedEnd: true`, and unique rows equal to `COUNT(*)`.
-
-2. **Make CI build and test what would actually ship.**
+1. **Make CI build and test what would actually ship — now the blocking item.**
    `.github/workflows/ci.yml` pins `node-version: 22.18.0`, then runs `npm ci`,
    `npm test` (`tsx --test` — Node's runner), `npm run build` (tsc → `dist/`),
    `docker build -t optimized-logger:test .` against the Node `Dockerfile`, and
@@ -205,7 +219,7 @@ decision stays the owner's; what follows are its prerequisites, in order.
    redundant and must stay. Bun also has its own runner (64 pass on the fourth
    cell) — decide whether CI runs one or both.
 
-3. **Make Bun the default, then re-verify zero-config startup (G0).**
+2. **Make Bun the default, then re-verify zero-config startup (G0).**
    `docker-compose.bun.yml` states in its own header that it is an **overlay**,
    applied as `COMPOSE_FILE=docker-compose.yml:docker-compose.bun.yml` and never
    instead of the base file; it also expects a distinct `COMPOSE_PROJECT_NAME`
@@ -214,22 +228,39 @@ decision stays the owner's; what follows are its prerequisites, in order.
    and the bun healthcheck into the base files, then verify from a clean volume
    on port 8080.
 
-**One adoption check is already clear — do not spend a session repeating it.**
-Peak api RSS on Bun + Fastify is **91.3–105.8 MiB against the 256 MiB limit**
-(~41% of cap at worst) across six 60 s runs
-(`bench/raw/fb-b*-fastify-run*-resources.csv`), with Bun + Express at
-100–100.9 MiB — roughly 2× Node's 51.9 MiB and comfortably inside the cap. Bun's
-JavaScriptCore heap takes no `--max-old-space-size` equivalent, so `mem_limit` is
-the only ceiling and peak RSS is the number to watch: watch it in runs you are
+**Two adoption checks are already clear — do not spend a session repeating
+them.**
+
+*The drain walk*, 2026-08-18: run at 1,511,600 rows on `perf/fastify-bun`, all
+four conditions met, across a tied-timestamp group that straddles the
+999,999→1,000,000 boundary. See Status above. What is still unrun on that path:
+**attribute-filtered walks** (`HOT_ATTRIBUTE_KEYS` is empty in the shipped
+compose file, so the ordered partial-index path was never exercised) and **any
+walk under concurrent ingest** — every walk so far ran against a static table.
+
+*Peak RSS*: on Bun + Fastify ingest it is **91.3–105.8 MiB against the 256 MiB
+limit** across six 60 s runs (`bench/raw/fb-b*-fastify-run*-resources.csv`), with
+Bun + Express at 100–100.9 MiB — roughly 2× Node's 51.9 MiB and comfortably
+inside the cap. **The drain path is higher: 147.2 MiB**, 57% of cap
+(`bench/raw/2026-08-18-drain-fb-run2-resources.csv`), so it, not ingest, is the
+path to watch. Bun's JavaScriptCore heap takes no `--max-old-space-size`
+equivalent, so `mem_limit` is the only ceiling: watch peak RSS in runs you are
 already taking. **No run longer than 60 s exists on any branch**, so sustained
 RSS under a soak is still open.
 
-4. **Drain page latency is the worst outstanding miss** — page p95 87 ms against
-   an 8 ms target — and only the ingest path has been profiled. That path
-   serialises 1,000-row JSON pages, which is where a framework swap makes its
-   largest claim, so the framework question is half answered until this exists.
-   This is the *performance* half of item 1; both want the same harness run, but
-   only the correctness half blocks a merge.
+3. **Drain page latency is still the worst outstanding miss** — page p95
+   40–50 ms against an 8 ms target on Fastify + Bun (2026-08-18), 87 ms on `main`
+   in an earlier session. Those two numbers are **not comparable**: different
+   builds, different sessions, different table sizes. **The A/B has not been
+   run.** What the 2026-08-18 walk did establish is that the path is
+   *application-limited* — api pinned at its 0.5-CPU cap while postgres keeps
+   over half of its own in reserve at a 99.4% buffer hit ratio — so the cost is
+   in serialising 1,000-row JSON pages, exactly where a framework swap makes its
+   largest claim. The headroom is real; what either swap does with it is
+   unmeasured. Take it interleaved, three per side, to the standard below.
+
+4. **Only the ingest path has been CPU-profiled.** The read path has resource
+   numbers now but no profile, so *which* frames own that ~50% is unknown.
 
 5. **Allocation reduction remains the largest single ingest target**, and it is
    independent of both swaps: `computeRollups` (9.6% of on-CPU) and `csv` (5.2%)
