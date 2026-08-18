@@ -347,13 +347,29 @@ RSS under a soak is still open.
    the HTTP layer. Response schemas (item 6) are the one untried application-side
    lever.
 
-2. **PostgreSQL is now the constraint — profile it.** This is the top technical
-   item after the merge. On Fastify + Bun under mixed load the api sits at 45% of
-   its 0.5 cap while **postgres runs 72–76% with peaks over its own 1.0 cap**;
-   on Express it was the reverse (api pinned, postgres 28–33%). Every remaining
-   application-side idea is now aimed at the component with headroom to spare.
-   Nothing here has ever profiled the database — no `pg_stat_statements`, no
-   `EXPLAIN (ANALYZE, BUFFERS)` under concurrent load, no wait-event sampling.
+2. **PostgreSQL is profiled — and 173 MB of index is maintained for zero scans.**
+   Done 2026-08-18, `docs/test_results/postgres-profile.md`. Database time splits
+   **71% writes / 28% reads**: `COPY` is 71.3% at 34.7 ms per batch, the cursor
+   page query 28.2% at 7.4–8.9 ms per 1,000 rows, and the rollup `INSERT` just
+   0.2% — the `logs_agg_1m` design pays for itself. PostgreSQL is **on CPU, not
+   blocked on IO** (186 samples running against 3 on `DataFileRead`, 96.2% buffer
+   hit ratio), so the lever is less work, not faster storage.
+
+   The open item this creates: `logs_service_level_page_idx` (**116 MB**) and the
+   attribute GIN (**57 MB**) both took **zero scans**, while `EXPLAIN` shows the
+   page query served entirely by backward scans on each partition's primary key.
+   Both are still maintained inside the `COPY` that owns 71% of database time.
+   **This does not make them useless** — this workload never filters by service
+   or attribute, and migration 002 records the GIN taking an attribute lookup
+   from ~158 ms to ~0.4 ms. It makes them an explicit trade to measure: run the
+   drop against `DRAIN_FILTERS=service=checkout` so the read cost is exercised,
+   not just the write gain.
+
+   Second untouched signal: `buffers_backend` 38,055 against the checkpointer's
+   919 and the bgwriter's 18,238 — writers are stalling to find clean buffers.
+   `bgwriter_lru_maxpages` and `bgwriter_delay` are at defaults and have never
+   been measured. WAL runs ~9.5 MB/s (859 MB per 90 s run) with
+   `synchronous_commit=off` already set.
 
 3. **The read path has never been CPU-profiled.** Only ingest has. It now has
    resource numbers but no profile, so which frames own its cost is unknown.
