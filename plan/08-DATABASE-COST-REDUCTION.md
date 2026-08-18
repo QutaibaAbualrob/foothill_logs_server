@@ -248,6 +248,22 @@ both without giving up the open-loop default.
 
 ## CHANGES
 
+- 2026-08-18 (item 1 CLOSED): read half and write half both complete, 30 runs.
+  **Decision: drop `logs_service_level_page_idx`, keep the attributes GIN**
+  (migration `004`, commit `0933dcd`). The two indexes looked identical in the
+  profile — both zero scans — and priced out oppositely against the query shape
+  each serves: the service-filtered walk was unchanged without the service index
+  (bands overlapping), while a selective attribute lookup was 42.7x slower
+  without the GIN. Dropping the service index alone, measured above capacity:
+  **+12.4% / +25.1% throughput at batch 33 / 200, −18% WAL per row, −16% / −22%
+  database CPU per krow/s**, every normalized band separated. Gates green
+  including the drill. **Item 2 is reshaped, not ready**: the GIN is
+  load-bearing, so the question is now whether a partial hot-key index beats the
+  whole-bag GIN on write cost at equal lookup latency — blocked on the harness
+  having no mid-selectivity attribute key. Evidence:
+  `docs/test_results/index-removal.md`,
+  `bench/results/2026-08-18-index-removal/`. Recorded as entry 6 in
+  `docs/DESIGN-DECISIONS.md`.
 - 2026-08-18 (stage 0 screen): both indexes dropped together, batch 33,
   unfiltered walk, 3 interleaved pairs. **PostgreSQL CPU avg 77.0-79.6% ->
   54.2-55.1% (-30.3%), WAL 901 MB -> 394 MB (-56.3%), ingest p95 470-572 ms ->

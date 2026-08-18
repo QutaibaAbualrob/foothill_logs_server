@@ -21,6 +21,7 @@ Windows and say so.
 | `src/`, `scripts/`, `test/`, `load/` | The code, benchmark harnesses, correctness gates, load tests. |
 | `docker-compose.yml`, `Dockerfile`, `package.json` | What gets run: app 0.5 CPU / 256 MB, database 1 CPU / 1 GB. The app CPU cap is settled at 0.5 — do not raise it. |
 | `docs/test_results/` | Measured runs of this code on Linux — the source of truth for performance numbers. |
+| `docs/DESIGN-DECISIONS.md` | **Why the design is what it is** — one entry per choice, with the test that guards it and the measurement that justifies it. **Add an entry whenever you make a design choice.** |
 | `plan/` | The delivery plan: `00-MASTER-PLAN.md` (thesis + schedule), `HANDOFF.md` (state of the build), `05-BENCHMARK-PROTOCOL.md` (how we measure), `08-DATABASE-COST-REDUCTION.md` (**the work in flight — read this before touching the database**). |
 | `plan/internal/SANITIZATION.md` | **Pre-push review. Read it before every commit/push.** Gitignored — never tracked. |
 | `search_rnd/RND.md` | The R&D record: research decisions and design rules. |
@@ -244,6 +245,33 @@ that is already finished. If a task turns out to be partly done, say which part.
   **0.96–1.09 pages/s and 14.5–15.3%**. Full detail and the caveats are in item 0
   of Next, below, and in `docs/test_results/mixed-workload-baseline.md`.
 
+- [x] **Two zero-scan indexes priced; one dropped, one kept** — 2026-08-18,
+  branch `perf/db-write-cost` at `0933dcd`, migration `004`. The profile found
+  `logs_service_level_page_idx` (116 MB) and the attributes GIN (57 MB) both at
+  **zero scans**, maintained on every row inside the `COPY` that owns 71.3% of
+  database time. Measured against the query shape each one serves, they priced
+  out oppositely: dropping the service index left a **service-filtered walk
+  unchanged** (12.6–13.1 pages/s before, 12.4–14.4 after — every band
+  overlapping), while dropping the GIN made a selective attribute lookup
+  **42.7× slower at p50** (2.4–2.7 ms → 106.1–110.6 ms). So the service index
+  is gone and the GIN stays.
+
+  Dropping it bought **−18% WAL per row** (707–711 → 575–583 bytes) and
+  **+12.4% / +25.1%** ingest throughput at batch 33 / 200, every normalized
+  band separated. 30 runs, three interleaved pairs per cell, zero errors. Gates
+  on the merged tree: typecheck clean, 35 pass / 0 fail / **0 skipped** with
+  integration executing, smoke, 73/73 reliability, drill PASS (391,400 of
+  391,400 acknowledged rows persisted).
+  Evidence: `docs/test_results/index-removal.md`,
+  `bench/results/2026-08-18-index-removal/`.
+
+  **Two method notes that will recur.** A fixed offered rate hides a write-cost
+  gain: at a 15,000 logs/s target both sides met the offer with zero shed and
+  throughput read 0.0%, so the write cells were re-run **above capacity** and the
+  gain appeared. And once throughput diverges between sides, **absolute WAL and
+  CPU stop being comparable** — at batch 200 absolute WAL looked unchanged while
+  WAL *per row* fell 18.7%. Use `wal_bytes_per_row` in `runs.csv`.
+
 ### Next
 
 > **ACTIVE WORK — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
@@ -254,10 +282,23 @@ that is already finished. If a task turns out to be partly done, say which part.
 > now scheduled there rather than free-floating.
 >
 > **Phase 1 (items 1–5): reduce database CPU per ingested row.** No durability
-> trade in any of them. Running **item 1 first and alone** — removing or
-> narrowing the two zero-scan indexes — because its result changes the expected
-> value of the other four. Phase 1 items: index removal/narrowing, the partial
-> attribute index, binary `COPY`, `max_wal_size`, `wal_buffers`.
+> trade in any of them.
+>
+> **Item 1 is DONE** (`0933dcd`) — see Status above. It also **reshaped item 2**:
+> that was "replace the whole-bag GIN with a narrow partial index", but the GIN
+> is now measured as load-bearing, so it is no longer a replacement. The
+> remaining question is narrower — can a partial expression index on a hot key
+> deliver the same ~2.5 ms lookup for less write cost than the whole-bag GIN?
+> That is blocked on the harness generating no mid-selectivity attribute key
+> (`trace_id` is unique per row, `region` constant, `retry` three values), and a
+> PostgreSQL 16 **hash** index is a live option for the equality-only case —
+> HP's "never use hash indexes" verdict is 9.6-era, and PG10 made them
+> WAL-logged and crash-safe.
+>
+> Remaining in phase 1: items 4–5 (`max_wal_size` 2 GB → 8 GB with
+> `log_checkpoints`, and `wal_buffers = 16MB`) are two compose lines and should
+> go next; item 3 (binary `COPY`) is the largest piece of work and attacks the
+> server-side CSV parse inside the 71.3% owner.
 >
 > **Phase 2 (items 6–9): measurement gaps, not tuning.** Explicitly **not
 > scheduled** until phase 1 reports: background-writer tuning (direction
@@ -523,6 +564,17 @@ it. Two builds converging there is a real finding, not a failed run.
 
 ## Standing rules
 
+- **Record every design choice in `docs/DESIGN-DECISIONS.md`, in the same
+  session you make it.** Any change to schema, indexes, the ingest or read path,
+  pool layout, durability settings, runtime, or the measurement protocol gets an
+  entry: what was chosen, what was rejected, why, what it gives up, the test or
+  gate that guards it, and the measurement that justifies it. A choice recorded
+  only in a commit message or a results file is invisible to the next reader,
+  and the reasoning is the part that does not survive in the code. The file is
+  **append-only**: if a decision is reversed, keep the original entry and add
+  the reversal with its evidence — that a choice was tried and abandoned is part
+  of the design. If a decision has no automated guard, **say so in the entry**
+  rather than leaving the line blank; entries 10 and 11 are the worked examples.
 - **Keep this file current.** Finishing a task includes updating the Status
   section above in the same session — done, with a pointer to the evidence, and
   the new next step written out. This file is the map; a stale map sends the
