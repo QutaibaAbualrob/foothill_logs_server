@@ -5,17 +5,27 @@ export interface Predicates {
   readonly values: unknown[];
 }
 
+/**
+ * `parameterOffset` shifts the emitted placeholder numbers so a predicate set
+ * can be embedded in a larger statement that already binds parameters — the
+ * UNION ALL aggregate composes three branches into one round trip and each
+ * branch must continue the shared numbering rather than restart at $1. The
+ * returned `values` stay branch-local and are concatenated by the caller in the
+ * same order the placeholders were emitted. Default 0 leaves every existing
+ * call site byte-identical.
+ */
 export function buildPredicates(
   filters: QueryFilters,
   cursor?: CursorKey,
   hotAttributeKeys: readonly string[] = [],
+  parameterOffset = 0,
 ): Predicates {
   const conditions: string[] = [];
   const values: unknown[] = [];
   const hot = new Set(hotAttributeKeys);
   const parameter = (value: unknown): string => {
     values.push(value);
-    return `$${String(values.length)}`;
+    return `$${String(parameterOffset + values.length)}`;
   };
 
   if (filters.service !== undefined) conditions.push(`service = ${parameter(filters.service)}`);

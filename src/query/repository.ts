@@ -169,47 +169,91 @@ export class PgLogQueryRepository {
     if (Date.parse(edges.alignedSince) >= Date.parse(edges.alignedUntil)) {
       return this.aggregateRaw(query);
     }
-    const parts: AggregateRow[][] = [
-      await this.aggregateRollup(query, edges.alignedSince, edges.alignedUntil),
-    ];
-    if (edges.hasLeft) {
-      parts.push(await this.aggregateRaw(query, { since, until: edges.alignedSince }));
-    }
-    if (edges.hasRight) {
-      parts.push(await this.aggregateRaw(query, { since: edges.alignedUntil, until }));
-    }
-    return mergeAggregateRows(parts);
+    // One round trip, not three. The interior and both edges are cheap
+    // individually — the rollup holds a few hundred rows and an edge covers at
+    // most one partial minute — but each separate statement is another pool
+    // acquisition that queues for the database CPU behind an in-flight flush.
+    // Three of those serialise into an aggregate latency that no single query
+    // explains. UNION ALL is mergeAggregateRows expressed in SQL: the outer
+    // GROUP BY sums an edge and the interior that re-bucket to the same start,
+    // which a bucket wider than one minute always produces.
+    const combined = this.buildCombinedAggregate(query, edges);
+    const result = await this.pool.query<AggregateRow>(combined.sql, combined.values);
+    return result.rows;
   }
 
-  private async aggregateRollup(
+  /**
+   * The rollup interior plus each present edge as one statement. Every branch
+   * appends to a single parameter list, so each must be built with an offset
+   * equal to the number of values already bound (see buildPredicates).
+   */
+  private buildCombinedAggregate(
     query: ParsedAggregateQuery,
-    since: string,
-    until: string,
-  ): Promise<AggregateRow[]> {
-    const values: unknown[] = [since, until];
-    const conditions = ["bucket_start >= $1::timestamptz", "bucket_start < $2::timestamptz"];
+    edges: EdgeSlices,
+  ): { sql: string; values: unknown[] } {
+    const { since, until } = query.filters;
+    const seconds = BUCKET_SECONDS[query.bucket];
+    const group = query.groupBy === undefined ? "NULL::text" : query.groupBy;
+    const grouping = query.groupBy === undefined ? "1" : "1, 2";
+    const values: unknown[] = [];
+    const parameter = (value: unknown): string => {
+      values.push(value);
+      return `$${String(values.length)}`;
+    };
+
+    const rollupConditions = [
+      `bucket_start >= ${parameter(edges.alignedSince)}::timestamptz`,
+      `bucket_start < ${parameter(edges.alignedUntil)}::timestamptz`,
+    ];
     if (query.filters.service !== undefined) {
-      values.push(query.filters.service);
-      conditions.push(`service = $${String(values.length)}`);
+      rollupConditions.push(`service = ${parameter(query.filters.service)}`);
     }
     if (query.filters.level !== undefined) {
-      values.push(query.filters.level);
-      conditions.push(`level = $${String(values.length)}`);
+      rollupConditions.push(`level = ${parameter(query.filters.level)}`);
     }
-    const seconds = BUCKET_SECONDS[query.bucket];
-    const bucket = `to_timestamp(floor(extract(epoch FROM bucket_start) / ${seconds}) * ${seconds})`;
-    const group = query.groupBy === undefined ? "NULL::text" : query.groupBy;
-    const result = await this.pool.query<AggregateRow>(
-      `SELECT to_char((${bucket}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start,
+    const branches: string[] = [
+      `SELECT to_timestamp(floor(extract(epoch FROM bucket_start) / ${String(seconds)}) * ${String(seconds)}) AS bucket,
               ${group} AS group_value,
-              SUM(count)::text AS count
+              SUM(count)::bigint AS total
        FROM logs_agg_1m
-       WHERE ${conditions.join(" AND ")}
-       GROUP BY ${query.groupBy === undefined ? "1" : "1, 2"}
-       ORDER BY 1 ASC, 2 ASC NULLS FIRST`,
+       WHERE ${rollupConditions.join(" AND ")}
+       GROUP BY ${grouping}`,
+    ];
+
+    const edgeBranch = (bounds: { readonly since: string; readonly until: string }): string => {
+      const predicates = buildPredicates(
+        { ...query.filters, since: bounds.since, until: bounds.until },
+        undefined,
+        this.hotAttributeKeys,
+        values.length,
+      );
+      values.push(...predicates.values);
+      return `SELECT to_timestamp(floor(extract(epoch FROM timestamp) / ${String(seconds)}) * ${String(seconds)}) AS bucket,
+                     ${group} AS group_value,
+                     COUNT(*)::bigint AS total
+              FROM logs
+              ${predicates.sql}
+              GROUP BY ${grouping}`;
+    };
+    if (edges.hasLeft) branches.push(edgeBranch({ since, until: edges.alignedSince }));
+    if (edges.hasRight) branches.push(edgeBranch({ since: edges.alignedUntil, until }));
+
+    // With no group_by the outer group_value must be re-emitted as the constant
+    // NULL::text rather than selected from the subquery. PostgreSQL permits a
+    // constant in the select list of a GROUP BY 1 query, but a column reference
+    // has to be grouped or aggregated — selecting parts.group_value under
+    // GROUP BY 1 is a hard 42803, which is what the branch inside the subquery
+    // gets away with only because there it is itself the constant.
+    const outerGroupValue = query.groupBy === undefined ? "NULL::text" : "group_value";
+    return {
+      sql: `SELECT to_char(bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start,
+                   ${outerGroupValue} AS group_value,
+                   SUM(total)::text AS count
+            FROM (${branches.join(" UNION ALL ")}) parts
+            GROUP BY ${grouping}
+            ORDER BY 1 ASC, 2 ASC NULLS FIRST`,
       values,
-    );
-    return result.rows;
+    };
   }
 
   private async aggregateRaw(
@@ -236,47 +280,6 @@ export class PgLogQueryRepository {
     );
     return result.rows;
   }
-}
-
-interface MergedAggregateRow {
-  readonly start: string;
-  readonly groupValue: string | null;
-  count: bigint;
-}
-
-/**
- * Combines the interior and edge result sets, summing counts that land in
- * the same (bucket, group) pair as BIGINT so no intermediate value can
- * overflow before safeCount validates the final totals. Summing is required
- * for correctness: for buckets larger than one minute, an edge slice and
- * the rollup interior re-bucket into the same bucket start (a 5m bucket
- * holds minutes 12:01-12:04 from the interior and the 12:00:30-12:01:00
- * edge), and both paths must add together.
- */
-function mergeAggregateRows(parts: readonly AggregateRow[][]): AggregateRow[] {
-  const merged = new Map<string, MergedAggregateRow>();
-  for (const rows of parts) {
-    for (const row of rows) {
-      const key = `${row.start}\u0000${row.group_value ?? ""}`;
-      const existing = merged.get(key);
-      if (existing === undefined) {
-        merged.set(key, { start: row.start, groupValue: row.group_value, count: BigInt(row.count) });
-      } else {
-        existing.count += BigInt(row.count);
-      }
-    }
-  }
-  return [...merged.values()]
-    .sort(compareMergedRows)
-    .map((row) => ({ start: row.start, group_value: row.groupValue, count: String(row.count) }));
-}
-
-/** Mirrors the SQL ORDER BY 1 ASC, 2 ASC NULLS FIRST. */
-function compareMergedRows(left: MergedAggregateRow, right: MergedAggregateRow): number {
-  if (left.start !== right.start) return left.start < right.start ? -1 : 1;
-  if (left.groupValue === null) return right.groupValue === null ? 0 : -1;
-  if (right.groupValue === null) return 1;
-  return left.groupValue < right.groupValue ? -1 : left.groupValue > right.groupValue ? 1 : 0;
 }
 
 export function safeCount(value: string): number {

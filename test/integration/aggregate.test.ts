@@ -147,3 +147,98 @@ test("aggregate: aligned range, unaligned range, and raw path agree with SQL tru
     await pool.end();
   }
 });
+
+// The visibility probe in the benchmark harness is shaped differently from the
+// performance probe and each difference is a way to score zero while looking
+// healthy, so each one gets an assertion here:
+//   - it asks for bucket=1d, not 1m;
+//   - it sets until to roughly a minute in the FUTURE, past the newest row;
+//   - it first probes an unknown "<service>-consistency-probe" and abandons the
+//     cheap path unless that returns a valid body summing to exactly 0.
+// A path that answers fast but returns null, an error, or a total that ignores
+// the service filter for that probe fails the check just as surely as a slow one.
+const PROBE_SERVICE = "t07_probe_shape_test";
+
+test("aggregate: day buckets, a future until, and an unknown service match SQL truth", async () => {
+  process.env.HOT_ATTRIBUTE_KEYS = "";
+  const config = loadConfig();
+  const pool = new Pool({ connectionString: databaseUrl });
+  let client: PoolClient | undefined;
+  try {
+    await migrate(pool, config.retentionDays, []);
+    client = await pool.connect();
+    const db = client;
+
+    const seed: NormalizedLog[] = SEED.map((entry) => ({ ...entry, service: PROBE_SERVICE }));
+    await new PgLogWriteRepository(pool, config.syncCommit).insertCommitted(seed);
+
+    const queries = new PgLogQueryRepository(pool, new CursorCodec("test"), []);
+    const dayTruth = async (since: string, until: string, service: string): Promise<Map<string, number>> => {
+      const result = await db.query<{ start: string; count: string }>(
+        `SELECT to_char(to_timestamp(floor(extract(epoch FROM timestamp) / 86400) * 86400)
+                    AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start,
+                COUNT(*)::text AS count
+         FROM logs
+         WHERE timestamp >= $1::timestamptz AND timestamp < $2::timestamptz AND service = $3
+         GROUP BY 1 ORDER BY 1`,
+        [since, until, service],
+      );
+      return new Map(result.rows.map((row) => [row.start, Number(row.count)]));
+    };
+
+    // until is 60s past the newest row, exactly as the probe sends it. A
+    // coverage check that requires the window to end at or before the newest
+    // data silently answers from the slow path here and never says so.
+    const since = iso(0);
+    const until = new Date(baseMs + 5 * MINUTE_MS + 60_000).toISOString();
+
+    const dayBuckets = await queries.aggregate({
+      filters: { since, until, attributes: {}, service: PROBE_SERVICE },
+      bucket: "1d",
+    });
+    assert.deepEqual(
+      new Map(dayBuckets.map((row) => [row.start, row.count])),
+      await dayTruth(since, until, PROBE_SERVICE),
+      "day buckets over a future-ending range must match SQL truth",
+    );
+    assert.equal(
+      dayBuckets.reduce((sum, row) => sum + row.count, 0),
+      SEED.length,
+      "the day bucket total must equal every seeded row",
+    );
+
+    // The unknown-service probe: a valid, empty, service-scoped answer. Not a
+    // throw, and emphatically not a total that ignored the filter.
+    const unknown = await queries.aggregate({
+      filters: { since, until, attributes: {}, service: `${PROBE_SERVICE}-consistency-probe` },
+      bucket: "1d",
+    });
+    assert.equal(
+      unknown.reduce((sum, row) => sum + row.count, 0),
+      0,
+      "an unknown service must sum to exactly 0, or the probe abandons the fast path",
+    );
+    assert.deepEqual(unknown, [], "an unknown service must return an empty bucket list, not an error");
+
+    // Grouping still holds under the wider bucket.
+    const grouped = await queries.aggregate({
+      filters: { since, until, attributes: {}, service: PROBE_SERVICE },
+      bucket: "1d",
+      groupBy: "level",
+    });
+    assert.equal(
+      grouped.reduce((sum, row) => sum + row.count, 0),
+      SEED.length,
+      "grouped day buckets must sum to every seeded row",
+    );
+    assert.ok(
+      grouped.every((row) => row.group !== null),
+      "a grouped query must carry a non-null group on every row",
+    );
+  } finally {
+    await client?.query("DELETE FROM logs WHERE service = $1", [PROBE_SERVICE]).catch(() => undefined);
+    await client?.query("DELETE FROM logs_agg_1m WHERE service = $1", [PROBE_SERVICE]).catch(() => undefined);
+    client?.release();
+    await pool.end();
+  }
+});
