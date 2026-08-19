@@ -1,0 +1,7 @@
+run,stack,pair,drain_pages_s,drain_page_p95_ms,aggregate_p95_ms,visible_pct,limited_by,accepted,visible,ingest_logs_s,shed_requests,errors,api_cpu_avg,pg_cpu_avg,pg_cpu_max,validity
+mixed-node-express-run1,express+node,1,1.09,802.348,617.08,14.5,window,538824,78000,8895.5,16480,0,46.2,32.7,65.9,verified
+mixed-fb-run1,fastify+bun,1,21.68,85.834,86.115,99.8,data,900108,898227,14988.6,0,0,45.4,72.5,96.7,verified
+mixed-node-express-run2,express+node,2,0.96,896.78,2317.55,15.3,window,476652,73000,8030.2,18830,0,46.0,31.7,83.8,verified
+mixed-fb-run2,fastify+bun,2,19.88,88.702,94.778,99.7,data,900042,897072,14939.1,0,0,45.2,75.7,101.7,verified
+mixed-node-express-run3,express+node,3,1.01,892.171,878.488,14.7,window,518463,76000,8590.3,17370,0,46.0,28.4,58.9,verified
+mixed-fb-run3,fastify+bun,3,19.64,89.767,216.602,99.6,data,896676,893343,14919.5,110,0,45.5,73.6,101.8,verified

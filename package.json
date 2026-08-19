@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "bun": ">=1.3"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
+    "start:bun": "bun run src/index.ts",
+    "dev:bun": "bun --watch src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:integration": "tsx --test test/integration/**/*.test.ts",
@@ -18,17 +21,17 @@
     "drill": "bash scripts/failure-drill.sh",
     "bench": "node scripts/benchmark.mjs",
     "bench:drain": "node scripts/drain.mjs",
+    "bench:mixed": "node scripts/mixed-workload.mjs",
     "bench:load": "bash scripts/bench-load.sh",
     "bench:capture": "node scripts/capture-resources.mjs",
     "migrate": "tsx src/db/migrate-cli.ts"
   },
   "dependencies": {
-    "express": "5.1.0",
+    "fastify": "^5.12.0",
     "pg": "8.16.3",
     "pg-copy-streams": "7.0.0"
   },
   "devDependencies": {
-    "@types/express": "5.0.3",
     "@types/node": "24.3.0",
     "@types/pg": "8.15.5",
     "@types/pg-copy-streams": "1.2.5",

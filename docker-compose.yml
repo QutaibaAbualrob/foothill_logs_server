@@ -23,6 +23,22 @@ services:
       - checkpoint_completion_target=0.9
       - -c
       - max_wal_size=2GB
+      # Measured 2026-08-18 and left at 2GB deliberately. Raising it to 8GB
+      # halves the checkpoint count (2 -> 1 per 120 s run) and cuts WAL by 7.2%
+      # per row, but moves nothing else: throughput, both ingest percentiles,
+      # drain and database CPU all overlap. WAL bandwidth is not the constraint
+      # here -- the database is CPU-bound at a 96.2% buffer hit ratio. See
+      # docs/test_results/wal-tuning.md.
+      #
+      # Default is 1/32 of shared_buffers = 8MB. Raised because at 8MB the
+      # ingest run intermittently stalls contending for WAL buffers: measured
+      # over three interleaved pairs, throughput spread was 25% at 8MB against
+      # 0.9% at 16MB, with the 8MB *best* run matching 16MB. Ingest p95 falls
+      # 16.6%. This is a stability change, not a throughput change, and the
+      # evidence is qualified -- see docs/test_results/wal-tuning.md. Costs 8MB
+      # of the 1GB container.
+      - -c
+      - wal_buffers=16MB
       - -c
       - jit=off
       - -c
@@ -56,6 +72,12 @@ services:
       # on it.
       HOT_ATTRIBUTE_KEYS: ""
       RETENTION_DAYS: "30"
+      # Reject logs older than this many days at ingest, rather than accepting
+      # them and deleting them on the next retention pass. Refusing is the more
+      # honest answer, but it is a change to the ingest contract -- a client
+      # backfilling history gets a per-entry rejection where it used to get a
+      # 200 -- so it is opt-in and off by default. 0 disables the check.
+      MAX_LOG_AGE_DAYS: "${MAX_LOG_AGE_DAYS:-0}"
       WRITE_POOL_SIZE: "2"
       QUERY_POOL_SIZE: "8"
       # Attribute filters are index-backed (see migration 002), so this is a
@@ -65,17 +87,24 @@ services:
       QUERY_STATEMENT_TIMEOUT_MS: "5000"
       BATCH_DELAY_MS: "5"
       QUEUE_MAX_ROWS: "50000"
-      NODE_OPTIONS: --max-old-space-size=192
+      # No heap flag. --max-old-space-size is a V8 option and this image runs
+      # Bun, whose heap is JavaScriptCore's; there is no equivalent hard cap.
+      # mem_limit below is therefore the only ceiling, which makes peak RSS the
+      # number to watch — measured at 91-106 MiB on ingest and 147 MiB on the
+      # drain path, against the 256m limit. If Bun is ever OOM-killed here,
+      # `bun --smol run src/index.ts` is the documented next step.
+      NODE_OPTIONS: ""
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "${HOST_PORT:-8080}:8080"
     healthcheck:
+      # The bun image ships no node binary; same probe, bun's runtime.
       test:
         [
           "CMD",
-          "node",
+          "bun",
           "-e",
           "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
         ]

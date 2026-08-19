@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { Pool, PoolClient } from "pg";
 
 const MIGRATION_LOCK = "824631947205";
-const MIGRATIONS = ["001_init.sql", "002_attributes_gin.sql"] as const;
+const MIGRATIONS = [
+  "001_init.sql",
+  "002_attributes_gin.sql",
+  "003_ingested_at_and_field_bounds.sql",
+  "004_drop_service_level_page_idx.sql",
+] as const;
 
 const HOT_ATTRIBUTE_INDEX_PREFIX = "logs_attr_";
 // Mirrors the validation in config.ts. Re-asserted here so that this module

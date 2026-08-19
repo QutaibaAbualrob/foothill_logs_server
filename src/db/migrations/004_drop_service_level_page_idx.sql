@@ -1,0 +1,33 @@
+-- Drop logs_service_level_page_idx -- (service, level, timestamp DESC, id DESC).
+--
+-- Measured 2026-08-18 on the shipped stack (Fastify on Bun 1.3.14) with
+-- scripts/mixed-workload.mjs, 30 runs total, three interleaved pairs per cell.
+-- Evidence: docs/test_results/index-removal.md.
+--
+-- The write cost was real and is now removed. Normalized per ingested row, at
+-- both batch sizes, with no overlap between sides:
+--
+--   WAL              710 -> 580 bytes/row  (-18%)
+--   PostgreSQL CPU   -16% per krow/s at batch 33, -22% at batch 200
+--   throughput       +12.4% at batch 33, +25.1% at batch 200
+--
+-- The read cost is the part that decided it, and it is the reason this drop
+-- goes ahead while the attribute GIN stays. A service-filtered cursor walk
+-- (DRAIN_FILTERS=service=checkout) is the query shape this index exists to
+-- serve, and removing the index does not slow it down: 12.6-13.1 pages/s
+-- before against 12.4-14.4 after, page p50 26.6-34.7 ms against 21.7-30.4 ms
+-- -- every band overlapping, p50 if anything better. At a 96.2% buffer hit
+-- ratio a backward primary-key scan that discards three rows in four is
+-- cheaper than maintaining a fourth B-tree, and the CPU freed by dropping it
+-- pays for the extra rows examined.
+--
+-- Contrast, from the same session: dropping the attributes GIN made a
+-- selective attribute lookup 42.7x slower at p50 (2.4-2.7 ms -> 106.1-110.6
+-- ms) and cut its rate to 0.05x. That index earns its footprint. This one did
+-- not.
+--
+-- If a future workload pages heavily by service or level under a much larger
+-- table, re-measure before assuming this conclusion still holds: it rests on
+-- the read set being RAM-resident, which is what makes the discarded rows
+-- cheap.
+DROP INDEX IF EXISTS logs_service_level_page_idx;

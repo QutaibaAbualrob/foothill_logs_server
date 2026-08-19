@@ -38,6 +38,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     cursorSecret: "test",
     hotAttributeKeys: [],
     retentionDays: 30,
+    maxLogAgeDays: 0,
     retentionIntervalMs: 3600000,
     retentionBatchRows: 5000,
     batchDelayMs: 2,

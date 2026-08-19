@@ -1,0 +1,5 @@
+file,walk,filters,runtime,framework,proof_pid1,rows_in_table,pages,rows_walked,unique_rows,duplicates,order_violations,reached_end,rows_match_expected,elapsed_s,pages_per_second,rows_per_second,page_p50_ms,page_p95_ms,page_p99_ms,resources_captured,started_at
+2026-08-18-drain-seed.json,seed-ingest,,bun 1.3.14,fastify,bun run src/index.ts,0,,1511600,,,,,,45.888,,32941,,,,no,2026-08-18T08:51:45.274Z
+2026-08-18-drain-fastify-bun-unfiltered.json,unfiltered,,bun 1.3.14,fastify,bun run src/index.ts,1511600,1512,1511600,1511600,0,0,true,true,35.143,43.0,43013,17.109,49.571,82.778,no,2026-08-18T08:53:03.314Z
+2026-08-18-drain-fastify-bun-service.json,service-filtered,service=payments,bun 1.3.14,fastify,bun run src/index.ts,1511600,378,377900,377900,0,0,true,true,8.472,44.6,44607,18.332,46.406,77.987,no,2026-08-18T08:54:12.263Z
+2026-08-18-drain-fastify-bun-unfiltered-run2.json,unfiltered,,bun 1.3.14,fastify,bun run src/index.ts,1511600,1512,1511600,1511600,0,0,true,true,27.884,54.2,54211,14.583,40.043,76.788,yes,2026-08-18T08:54:59.869Z

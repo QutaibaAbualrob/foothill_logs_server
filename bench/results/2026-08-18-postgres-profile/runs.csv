@@ -1,0 +1,20 @@
+metric,value,unit,note
+copy_total_time,61647,ms,71.3% of database time; 1778 calls at 34.67 ms mean
+page_query_total_time,16375,ms,18.9%; 2210 calls at 7.41 ms mean
+page_query_total_time_2,7998,ms,9.3%; 898 calls at 8.91 ms mean
+rollup_upsert_total_time,184,ms,0.2%; 1778 calls at 0.10 ms mean — logs_agg_1m pays for itself
+write_share,71.5,percent,COPY + rollup upsert
+read_share,28.2,percent,page queries
+idx_service_level_size,116,MB,idx_scan = 0 in this run
+idx_attributes_gin_size,57,MB,idx_scan = 0 in this run
+idx_pkey_size,40,MB,idx_scan = 5095; serves the page query
+wal_bytes,859,MB,over ~90 s ≈ 9.5 MB/s
+wal_records,8170369,count,16141 full-page images
+buffers_backend,38055,count,backends evicting their own buffers
+buffers_checkpoint,919,count,
+buffers_clean,18238,count,bgwriter at untouched defaults
+heap_blks_hit,222895,count,96.2% hit ratio with 8908 reads
+wait_cpu_running,186,samples,4 Hz sampling of non-idle backends
+wait_client_read,50,samples,
+wait_io_datafileread,3,samples,PostgreSQL is on CPU, not blocked on storage
+rows_inserted,1349964,count,into logs_2026_08
