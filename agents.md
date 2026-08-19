@@ -301,7 +301,122 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
-> **ACTIVE WORK — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
+> **ACTIVE WORK — branch `perf/read-path-and-rollup`, opened 2026-08-19 from
+> `e84b6de`. Everything after this block is ON HOLD until it closes.**
+>
+> **The problem, stated exactly.** `main @ e84b6de` scores **95.1 / 95.8 / 94.9**
+> on the official benchmark CLI run locally, and **39.49** on the platform.
+> Correctness (15/15) and Reliability (20/20) are identical in both places. The
+> whole gap is **Performance 4.49/50** and **Queries 0.00/15**. This host reports
+> `machine speed 0.12x reference` — we are eight times slower than the reference
+> box and still return the aggregate roughly ninety times faster than the
+> platform does.
+>
+> **The scoring formula — derived, then verified to 1e-6 on four runs across two
+> CLI versions:**
+>
+> ```
+> queries          = 9 * aggregateLatency + 6 * (ecScenariosPassed / 4)
+> aggregateLatency = 1 - (load-scenario aggregate p95 ms / 500)
+> ```
+>
+> It **zeroes at 500 ms** and is driven by the **load scenario alone**;
+> `readAfterWrite` is reported but carries **zero weight**. So nine of the
+> fifteen Queries points ride on one number: load-scenario aggregate p95. Ours is
+> **4,595 ms**. That is the single most valuable number in the project.
+>
+> **Eight explanations have been proposed and eliminated by measurement.** Do not
+> re-propose these without new evidence:
+>
+> | candidate | how it died |
+> | --- | --- |
+> | write path / WAL / index cost | local ingests 22,000 logs/s on the same code |
+> | our own CPU caps being too tight | the CLI enforces identical caps and we hit target under them |
+> | response-shape mismatch | same JSON scores 14.1/15 on queries locally |
+> | the `q` substring scan | the graded aggregate probe issues no `q` and no filters |
+> | rollup hot-key contention | our batcher is single-flight (`batcher.ts:103`), so flushes never overlap |
+> | fixture seed / service cardinality | four seeds, identical results every time |
+> | rollup table size | 691,216 rows / 112 MB still answers in **2.47 ms** by index scan |
+> | retention worker interference | hourly timer against a fresh volume; a ~13 min run never fires it twice |
+>
+> **Our own resource profile is inverted, and that is the live clue.** In the
+> graded run the application sits at **5.42% of its 0.5-CPU cap** while
+> PostgreSQL runs **75.60% average and 100.38% peak** of its 1.0 cap. The
+> application is idle and the database is saturated. Whatever is wrong is
+> database work per row, not application work.
+>
+> **Why more local A/B cannot settle this.** Our harness saturates its own
+> offered ceiling with zero shed, so any throughput comparison reads ~0.0%
+> **by construction**. That is exactly what happened in
+> `docs/test_results/index-removal.md`: PostgreSQL CPU −30%, WAL −56%, ingest p95
+> −33%, and the throughput column said "0.0%" — so the index stayed. This is
+> standard rule 8 biting us in the direction it warns about. **A platform
+> submission is now the instrument**, and the local CLI is the regression gate.
+>
+> **Staged, one submission per stage, so a delta can be attributed.**
+>
+> **Stage 1 — two config lines, no code.**
+>
+> 1. `QUERY_STATEMENT_TIMEOUT_MS` **5000 → 10000** (the code default). Our
+>    aggregate p95 is 4,595 ms against a 5,000 ms cap, so the tail is being
+>    clipped into `{"error":"internal server error"}` — which is what drives
+>    `response_shape_valid` to 0. Recovers at most the **6** eventual-consistency
+>    points; it cannot touch the 9.
+> 2. `QUERY_POOL_SIZE` **8 → 2**. Measured here 2026-08-19: eight concurrent
+>    unindexed reads returned **all eight HTTP 500** at 5.05 s with
+>    `canceling statement due to statement timeout`. A pool wider than the
+>    database can serve converts queueing into failures. These two are deliberately
+>    paired — raising the timeout alone lets one scan hold a backend for ten
+>    seconds, which is the exact risk the current compose comment cites.
+>
+> **Stage 2 — the nine-point item.** Replace the synchronous `logs_agg_1m` upsert
+> with an **in-process per-second counter cache**: bounded cell count, hydrated
+> before readiness, updated after commit, falling back to raw SQL outside the
+> retained window. This removes a hot-key upsert from every flush transaction and
+> takes the aggregate off the database entirely for the graded window.
+>
+> **Stage 3 — only after stage 2 lands.** Raise flush concurrency 1 → 2;
+> `WRITE_POOL_SIZE` is already 2 and currently unused. **Order matters:** doing
+> this before stage 2 introduces exactly the hot-key contention on `logs_agg_1m`
+> that the single-flight batcher is currently protecting us from.
+>
+> **Deferred with a gate, not scheduled: dropping `logs_attributes_gin_idx`.**
+> `docs/test_results/postgres-profile.md` records it at 57 MB, maintained on
+> every inserted row, taking **zero scans** — but that run was an unfiltered
+> cursor walk, and standard rule 8 says in as many words that such a walk
+> "will happily report no regression while a filtered read collapses". The
+> graded correctness catalog **does** filter by attribute, and correctness caps
+> the entire score. Without the GIN an attribute filter becomes a sequential scan
+> that can exceed the statement timeout and return a 500. **Gate: measure
+> attribute-filter latency without the index at graded row counts first.** Do not
+> bundle it into stage 1.
+>
+> **Explicitly not adopting: `UNLOGGED` tables.** Declined on durability grounds;
+> nothing here changes that.
+>
+> **Why a branch.** `e84b6de` is a known, reproducible 39.49 and is the control.
+> It stays on main and stays submittable, so a stage that loses points costs one
+> submission and nothing else.
+>
+> **Before the first submission, verify** that a graded run can be pointed at a
+> non-default branch — the run record pins a commit SHA. If it only accepts the
+> default branch, flip the default for the run and flip it back.
+>
+> **Record per stage:** score and per-category, plus per scenario
+> `logs_per_second`, `latency_p95_ms`, `aggregate_p95_ms`, `ingestion_latency`,
+> `error_rate`, and **both** `postgres_cpu` and `application_cpu`. The last two
+> matter most: the local CLI reports no resource metrics at all, so they are the
+> only way to see whether the inversion above is closing.
+>
+> **Exit criteria.** Stage 1: `response_shape_valid > 0` and **Queries > 0**.
+> Stage 2: aggregate p95 under ~400 ms, **Queries > 11**, and the throughput
+> component moving off 4.49.
+
+> **ON HOLD (2026-08-19) — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
+>
+> Paused in favour of the platform-gap work above. Phase 1 moved the score by
+> **+0.19 points** (39.30 → 39.49) in total, which is why it is not the priority.
+> Resume when the block above closes.
 >
 > The constraint has moved onto PostgreSQL, and the plan for reducing it is
 > **`plan/08-DATABASE-COST-REDUCTION.md`**. Read that before starting any
@@ -542,7 +657,7 @@ the "is it worth it" gate below, not a substitute for it.
 ## The measurement standard — what counts as evidence here
 
 Any A/B that informs a merge, a revert, or a claim in a results file must meet
-**all eight** of these. A run that misses one is a screen, not evidence: label it
+**all nine** of these. A run that misses one is a screen, not evidence: label it
 as such and do not put its number in a headline.
 
 1. **Interleaved.** Alternate the two builds — A, B, A, B, A, B. Never all of A
@@ -580,6 +695,12 @@ as such and do not put its number in a headline.
    *unfiltered* cursor walk, which touches none of the filtered-read structures
    and will happily report no regression while a filtered read collapses.
    Protocol detail and the pairing table: `plan/05-BENCHMARK-PROTOCOL.md` §1.9.
+
+9. **Score the change with the official benchmark CLI, not only our own
+   harness.** Our harness saturates its offered ceiling and therefore reports
+   ~0.0% on throughput A/Bs by construction — it cannot see a change that only
+   shows up under a generator that pushes past us. The CLI is the regression
+   gate; for anything touching the read path, the platform is the instrument.
 
 **Measured noise, for calibration:** ~6% for a repeated build within a session,
 ~11% across sessions. Never compare against a number from an earlier session.

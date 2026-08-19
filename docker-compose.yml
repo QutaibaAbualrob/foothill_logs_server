@@ -79,12 +79,23 @@ services:
       # 200 -- so it is opt-in and off by default. 0 disables the check.
       MAX_LOG_AGE_DAYS: "${MAX_LOG_AGE_DAYS:-0}"
       WRITE_POOL_SIZE: "2"
-      QUERY_POOL_SIZE: "8"
-      # Attribute filters are index-backed (see migration 002), so this is a
-      # backstop rather than load-bearing. It stays below the code default
-      # because a `q` substring search is still a scan, and one of those should
-      # not be able to hold a backend for ten seconds.
-      QUERY_STATEMENT_TIMEOUT_MS: "5000"
+      # Measured 2026-08-19: eight concurrent unindexed reads returned all eight
+      # HTTP 500 at 5.05 s with "canceling statement due to statement timeout".
+      # A read pool wider than the database can actually serve does not buy
+      # throughput, it converts queueing into failures. Under the graded load
+      # PostgreSQL runs at 75.6% average and 100.4% peak of its 1.0 CPU cap
+      # while the application sits at 5.4% of its own -- the database is the
+      # constraint, so the pool is sized to the database, not to the app.
+      QUERY_POOL_SIZE: "2"
+      # Raised to the code default. The graded aggregate p95 is 4,595 ms against
+      # the previous 5,000 ms cap, so the tail was being clipped into
+      # {"error":"internal server error"} instead of answered late -- which is
+      # what drove response_shape_valid to 0 and Queries to 0/15. The earlier
+      # argument for staying below the default was that a `q` substring scan
+      # should not hold a backend for ten seconds; that risk is now bounded by
+      # QUERY_POOL_SIZE above, which caps it at two backends. The two lines ship
+      # together and should not be separated.
+      QUERY_STATEMENT_TIMEOUT_MS: "10000"
       BATCH_DELAY_MS: "5"
       QUEUE_MAX_ROWS: "50000"
       # No heap flag. --max-old-space-size is a V8 option and this image runs
