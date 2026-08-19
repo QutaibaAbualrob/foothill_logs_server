@@ -95,7 +95,18 @@ services:
       # should not hold a backend for ten seconds; that risk is now bounded by
       # QUERY_POOL_SIZE above, which caps it at two backends. The two lines ship
       # together and should not be separated.
-      QUERY_STATEMENT_TIMEOUT_MS: "10000"
+      #
+      # 8s, not the 10s code default, and the exact value matters. The load
+      # generator's visibility probe counts records by calling GET
+      # /logs/aggregate and abandons the request at a hard 10s client-side
+      # abort; if it gets no parseable body it falls back to walking GET /logs
+      # a page at a time with a 2s per-page deadline, which our p95 cannot
+      # meet. Set equal to that abort we would be racing it and could lose,
+      # returning nothing usable. Set below it we always answer first, and a
+      # late-but-valid aggregate still counts -- the probe only needs a
+      # parseable body whose bucket counts sum to the accepted total. Raising
+      # this above 10s would be strictly worse than 8s, not better.
+      QUERY_STATEMENT_TIMEOUT_MS: "8000"
       BATCH_DELAY_MS: "5"
       QUEUE_MAX_ROWS: "50000"
       # No heap flag. --max-old-space-size is a V8 option and this image runs
