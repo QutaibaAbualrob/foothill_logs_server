@@ -210,10 +210,15 @@ export class PgLogQueryRepository {
     const edges = computeEdgeSlices(since, until, SECOND_MS);
     const interiorFromSec = Date.parse(edges.alignedSince) / SECOND_MS;
     const interiorToSec = Date.parse(edges.alignedUntil) / SECOND_MS;
-    // A window narrower than the second containing it has no whole-second
-    // interior, and its two edges would overlap rather than abut. Not a shape
-    // the hot path produces, and the SQL path answers it correctly.
-    if (interiorToSec <= interiorFromSec) return null;
+    // Only a *strictly* inverted interior is unsafe. When alignedSince and
+    // alignedUntil are equal the interior is empty but the two fringes abut
+    // exactly — [since, aligned) and [aligned, until) tile the window with no
+    // gap and no overlap — so it is still answerable. That case is not rare: a
+    // window wider than a second still lands here whenever it crosses only one
+    // second boundary, e.g. since at .200 and until at .635 of the next second.
+    // Only when the whole window sits inside one second does alignedSince run
+    // past alignedUntil, and then the fringes would double-count.
+    if (interiorToSec < interiorFromSec) return null;
 
     const bucketSeconds = BUCKET_SECONDS[query.bucket];
     const totals = new Map<string, number>();
@@ -222,16 +227,53 @@ export class PgLogQueryRepository {
       totals.set(formatBucketStart(startSec), count);
     }
 
-    // Each partial edge is at most one second of rows, and the counters already
-    // know whether that second holds any. When it does not, the fragment is
-    // dropped — which is what takes the common drain window to zero queries.
+    // Each partial edge is at most one second of rows, and there are three ways
+    // to settle it, in order of preference:
+    //
+    //   1. the counters prove the boundary second empty — nothing to do;
+    //   2. the query is unfiltered and the fringe is inside the millisecond
+    //      window — answer it exactly from memory;
+    //   3. otherwise decline to SQL.
+    //
+    // Case 2 is the one that matters. A window whose bound comes from the clock
+    // puts its fringe inside the *current* second, which under load is never
+    // empty, so case 1 never fires and every request used to reach case 3 — one
+    // statement per aggregate, queued behind every other reader on the same
+    // pool. Case 3 remains correct and remains the answer for a filtered query,
+    // because this layer is total-only: summing a total under a service or
+    // level filter would be a confidently wrong number, which is the single
+    // failure this cache must never produce.
+    const unfiltered = service === undefined && level === undefined;
     const fragments: { readonly since: string; readonly until: string }[] = [];
-    if (edges.hasLeft && counters.secondHasRows(Math.floor(sinceMs / SECOND_MS), service, level)) {
-      fragments.push({ since, until: edges.alignedSince });
-    }
-    if (edges.hasRight && counters.secondHasRows(Math.floor(untilMs / SECOND_MS), service, level)) {
-      fragments.push({ since: edges.alignedUntil, until });
-    }
+    const settleEdge = (
+      present: boolean,
+      fromMs: number,
+      toMs: number,
+      bounds: { readonly since: string; readonly until: string },
+    ): void => {
+      if (!present) return;
+      const sec = Math.floor(fromMs / SECOND_MS);
+      if (!counters.secondHasRows(sec, service, level)) return;
+      if (unfiltered) {
+        const exact = counters.msRangeTotal(fromMs, toMs);
+        if (exact !== null) {
+          if (exact > 0) {
+            const start = formatBucketStart(Math.floor(sec / bucketSeconds) * bucketSeconds);
+            totals.set(start, (totals.get(start) ?? 0) + exact);
+          }
+          return;
+        }
+      }
+      fragments.push(bounds);
+    };
+    settleEdge(edges.hasLeft, sinceMs, Date.parse(edges.alignedSince), {
+      since,
+      until: edges.alignedSince,
+    });
+    settleEdge(edges.hasRight, Date.parse(edges.alignedUntil), untilMs, {
+      since: edges.alignedUntil,
+      until,
+    });
     if (fragments.length > 0) {
       for (const row of await this.aggregateRawUnion(query, fragments)) {
         totals.set(row.start, (totals.get(row.start) ?? 0) + safeCount(row.count));

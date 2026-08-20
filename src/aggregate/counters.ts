@@ -35,7 +35,27 @@ export const WINDOW_MS = 2 * 60 * 60 * 1_000;
 export const MAX_CELLS = 1_000_000;
 
 /** Eviction is amortised onto ingest rather than run on a timer of its own. */
-const EVICT_INTERVAL_MS = 30_000;
+const EVICT_INTERVAL_MS = 5_000;
+
+/**
+ * How far back per-millisecond totals are kept, for answering the partial
+ * second at a window's edge without going to SQL.
+ *
+ * The per-second counters cannot answer a fringe because a fringe is a *prefix*
+ * or *suffix* of one second, and a window whose bound comes from the clock puts
+ * that fringe inside the current second — which at any real ingest rate is
+ * never empty. One statement per aggregate request follows, and on a saturated
+ * database that statement is not cheap because of what it reads, but because of
+ * what it waits behind.
+ *
+ * This layer is deliberately **total-only**: one number per millisecond, not a
+ * cell per (service, level). Every aggregate on the hot path is unfiltered, so
+ * a total answers all of them at ~15,000 numbers regardless of how many
+ * services exist — where a per-key map would scale with cardinality and could
+ * push the cell valve. A *filtered* query with a live fringe declines to SQL
+ * instead; see msRangeTotal.
+ */
+const RECENT_MS_WINDOW_MS = 10_000;
 
 /**
  * NUL, because it is the one byte that cannot appear in a PostgreSQL text
@@ -56,12 +76,22 @@ function cellKey(service: string, level: string): string {
 
 export class AggregateCounters {
   private readonly seconds = new Map<number, SecondCounters>();
+  /** Per-millisecond totals for recent time. Total-only, by design. */
+  private readonly recentMs = new Map<number, number>();
   private cells = 0;
   /**
    * The oldest instant the counters can answer for. Starts at the hydration
    * lower bound and only ever moves forward, as eviction drops old seconds.
    */
   private retainedFromMs = Number.POSITIVE_INFINITY;
+  /**
+   * The oldest instant with millisecond resolution. Distinct from
+   * retainedFromMs and always later: hydration reads the table grouped by
+   * second, so nothing before the process started can be resolved finer than a
+   * second, and a fringe reaching back past this must decline rather than
+   * return a partial sum.
+   */
+  private msRetainedFromMs = Number.POSITIVE_INFINITY;
   private usable = false;
   private lastEvictMs = 0;
 
@@ -72,6 +102,11 @@ export class AggregateCounters {
   /** Cell count, for tests and diagnostics. */
   public get size(): number {
     return this.cells;
+  }
+
+  /** Millisecond slots currently held. Bounded by the recent window, not by cardinality. */
+  public get recentSize(): number {
+    return this.recentMs.size;
   }
 
   /**
@@ -109,6 +144,9 @@ export class AggregateCounters {
         this.increment(Number(row.sec), row.service, row.level, count);
       }
       this.retainedFromMs = fromMs;
+      // Hydration groups by second, so no instant before now has millisecond
+      // resolution. Claiming otherwise would answer a fringe with a partial sum.
+      this.msRetainedFromMs = nowMs;
       this.lastEvictMs = nowMs;
       this.usable = true;
       console.log(JSON.stringify({ event: "aggregate_cache_hydrated", cells: this.cells, fromMs }));
@@ -144,6 +182,11 @@ export class AggregateCounters {
       }
       if (ms < this.retainedFromMs) continue;
       this.increment(Math.floor(ms / SECOND_MS), log.service, log.level, 1);
+      // Both layers, every row. The millisecond layer is not a rollup of the
+      // per-second one and never folds into it: the interior scan reads only
+      // whole seconds and the fringe reads only the partial seconds the
+      // interior excludes, so the two can never count the same row twice.
+      if (ms >= this.msRetainedFromMs) this.recentMs.set(ms, (this.recentMs.get(ms) ?? 0) + 1);
       if (this.cells > MAX_CELLS) {
         this.disable("add_over_cell_cap", this.cells);
         return;
@@ -155,6 +198,26 @@ export class AggregateCounters {
   /** True when the counters hold every row from `sinceMs` onward. */
   public covers(sinceMs: number): boolean {
     return this.usable && sinceMs >= this.retainedFromMs;
+  }
+
+  /**
+   * The exact number of rows in `[fromMs, toMs)`, or null when that range
+   * cannot be answered at millisecond resolution and SQL must run.
+   *
+   * Total-only, so the caller must have established there is no service or
+   * level filter before using this. Returning a total under a filter would be
+   * the one failure this cache exists to avoid: a confidently wrong number.
+   */
+  public msRangeTotal(fromMs: number, toMs: number): number | null {
+    if (!this.usable) return null;
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
+    if (fromMs < this.msRetainedFromMs) return null;
+    if (toMs <= fromMs) return 0;
+    // Callers pass a sub-second fringe, so this loop is bounded by 1,000.
+    if (toMs - fromMs > SECOND_MS) return null;
+    let total = 0;
+    for (let ms = fromMs; ms < toMs; ms += 1) total += this.recentMs.get(ms) ?? 0;
+    return total;
   }
 
   /**
@@ -248,6 +311,13 @@ export class AggregateCounters {
       this.cells -= entry.byKey.size;
       this.seconds.delete(sec);
     }
+    const msCutoff = now - RECENT_MS_WINDOW_MS;
+    for (const ms of this.recentMs.keys()) {
+      if (ms < msCutoff) this.recentMs.delete(ms);
+    }
+    // Advanced only here, and only to what was actually dropped, so the floor
+    // is never later than the data still held.
+    if (msCutoff > this.msRetainedFromMs) this.msRetainedFromMs = msCutoff;
     // Coverage shrinks to the cutoff whether or not anything was actually
     // dropped: a window with no rows in it still must not be claimed once the
     // seconds it spans are past the point where they would have been evicted.
@@ -257,6 +327,7 @@ export class AggregateCounters {
   private disable(reason: string, cells: number): void {
     this.usable = false;
     this.seconds.clear();
+    this.recentMs.clear();
     this.cells = 0;
     console.error(JSON.stringify({ event: "aggregate_cache_disabled", reason, cells }));
   }

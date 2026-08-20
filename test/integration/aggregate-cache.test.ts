@@ -363,3 +363,205 @@ test("aggregate cache: a covered window with empty edges never reaches PostgreSQ
     assert.ok(queryCount() > 0, "a window older than the cache window must fall through to SQL");
   });
 });
+
+// The millisecond fringe layer. A window whose upper bound comes from the clock
+// puts its fringe inside the *current* second, which under load is never empty
+// — so the "boundary second is empty" shortcut never fires and every request
+// used to reach SQL. These assert that it no longer does, that a filtered query
+// still declines rather than answering from a total, and that a fringe reaching
+// back past the millisecond window declines too.
+const MS_SERVICE = "t09_ms_fringe";
+const MS_OTHER = "t09_ms_other";
+
+test("aggregate cache: a live sub-second fringe is answered without SQL", async () => {
+  process.env.HOT_ATTRIBUTE_KEYS = "";
+  const config = loadConfig();
+  const pool = new Pool({ connectionString: databaseUrl });
+  let client: PoolClient | undefined;
+  try {
+    await migrate(pool, config.retentionDays, []);
+    client = await pool.connect();
+    const writes = new PgLogWriteRepository(pool, config.syncCommit);
+
+    const counters = new AggregateCounters();
+    await counters.hydrate(pool);
+    assert.equal(counters.enabled, true, "hydration must leave the cache usable");
+
+    // Rows land after hydration, so they carry millisecond resolution. Several
+    // share a millisecond and several share a second, which is what a fringe
+    // has to add up correctly.
+    const t0 = Date.now();
+    // Anchored on a real second boundary so the window's geometry is fixed
+    // rather than a function of Date.now() % 1000, and one row on every
+    // millisecond so any chosen bound has a row sitting exactly on it.
+    const anchor = Math.ceil((t0 + 200) / SECOND_MS) * SECOND_MS;
+    const recent: NormalizedLog[] = [];
+    for (let offset = 0; offset <= anchor - t0 + 1_400; offset += 1) {
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        const timestamp = new Date(t0 + offset).toISOString();
+        const service = offset % 3 === 0 ? MS_SERVICE : MS_OTHER;
+        recent.push({
+          timestamp,
+          level: "info",
+          service,
+          message: `ms fringe ${timestamp}`,
+          attributes: {},
+          attributesJson: "{}",
+          estimatedBytes: 96,
+        });
+      }
+    }
+    await writes.insertCommitted(recent);
+    counters.add(recent);
+    assert.ok(counters.recentSize > 0, "the millisecond layer must hold slots for recent rows");
+
+    let queries = 0;
+    const counted = countingPool(pool, () => {
+      queries += 1;
+    });
+    const codec = new CursorCodec("test");
+    const cached = new PgLogQueryRepository(counted, codec, [], counters);
+    const direct = new PgLogQueryRepository(pool, codec, []);
+
+    // A clock-derived upper bound, landing mid-second inside live data — the
+    // shape that cost one statement per aggregate on every request.
+    //
+    // A row sits on this instant and must be EXCLUDED (`timestamp < until`). A
+    // bound chosen between rows cannot tell a half-open range from a closed
+    // one, and an off-by-one would count rows the SQL path does not.
+    const untilMs = anchor + 1_135;
+    const since = new Date(untilMs - 3_600_000).toISOString();
+    const until = new Date(untilMs).toISOString();
+
+    queries = 0;
+    const unfiltered = await cached.aggregate({ filters: { since, until, attributes: {} }, bucket: "1m" });
+    const statements = queries;
+    assert.deepEqual(
+      unfiltered,
+      await direct.aggregate({ filters: { since, until, attributes: {} }, bucket: "1m" }),
+      "a clock-derived window must agree with the SQL path exactly",
+    );
+    assert.equal(statements, 0, "a live sub-second fringe must be answered from memory, with no statement");
+    assert.equal(
+      unfiltered.reduce((sum, row) => sum + row.count, 0),
+      recent.filter((entry) => Date.parse(entry.timestamp) < untilMs).length,
+      "the fringe total must count every row strictly before the bound",
+    );
+
+    assert.ok(
+      recent.some((entry) => Date.parse(entry.timestamp) === untilMs),
+      "the fixture must place rows exactly on the bound, or this asserts nothing",
+    );
+
+    // Both fringes live: `since` also lands mid-second inside the data, and on
+    // a row, which must be INCLUDED (`timestamp >= since`). The two halves of a
+    // half-open range fail in opposite directions, so both need a row on them.
+    const bothSinceMs = anchor - 300;
+    assert.ok(
+      recent.some((entry) => Date.parse(entry.timestamp) === bothSinceMs),
+      "the fixture must place rows exactly on the lower bound too",
+    );
+    const bothFilters = {
+      since: new Date(bothSinceMs).toISOString(),
+      until: new Date(untilMs).toISOString(),
+      attributes: {},
+    };
+    queries = 0;
+    const both = await cached.aggregate({ filters: bothFilters, bucket: "1m" });
+    const bothStatements = queries;
+    assert.deepEqual(
+      both,
+      await direct.aggregate({ filters: bothFilters, bucket: "1m" }),
+      "a window with two live fringes must agree with the SQL path exactly",
+    );
+    assert.equal(
+      both.reduce((sum, row) => sum + row.count, 0),
+      recent.filter((e) => {
+        const ms = Date.parse(e.timestamp);
+        return ms >= bothSinceMs && ms < untilMs;
+      }).length,
+      "a half-open range must include the row on `since` and exclude the row on `until`",
+    );
+    assert.equal(bothStatements, 0, "two live fringes must both be answered from memory");
+
+    // A window that fits entirely inside one populated second. There is no
+    // whole-second interior AND the two fringes would overrun each other —
+    // [since, next boundary) reaches past `until`, and [previous boundary,
+    // until) reaches back before `since` — so this must decline outright
+    // rather than add two overlapping partial sums.
+    const innerFilters = {
+      since: new Date(anchor + 200).toISOString(),
+      until: new Date(anchor + 700).toISOString(),
+      attributes: {},
+    };
+    const inner = await cached.aggregate({ filters: innerFilters, bucket: "1m" });
+    assert.deepEqual(
+      inner,
+      await direct.aggregate({ filters: innerFilters, bucket: "1m" }),
+      "a sub-second window must agree with the SQL path exactly",
+    );
+    assert.equal(
+      inner.reduce((sum, row) => sum + row.count, 0),
+      recent.filter((e) => {
+        const ms = Date.parse(e.timestamp);
+        return ms >= anchor + 200 && ms < anchor + 700;
+      }).length,
+      "a sub-second window must count each row once, not twice",
+    );
+
+    // The same window with a service filter. The millisecond layer is
+    // total-only, so this must decline to SQL rather than answer from a total.
+    queries = 0;
+    const filters = { since, until, attributes: {}, service: MS_SERVICE };
+    const filtered = await cached.aggregate({ filters, bucket: "1m" });
+    const filteredStatements = queries;
+    assert.deepEqual(
+      filtered,
+      await direct.aggregate({ filters, bucket: "1m" }),
+      "a filtered clock-derived window must still agree with the SQL path",
+    );
+    assert.equal(filteredStatements, 1, "a filtered live fringe must decline to exactly one statement");
+    assert.equal(
+      filtered.reduce((sum, row) => sum + row.count, 0),
+      recent.filter((e) => e.service === MS_SERVICE && Date.parse(e.timestamp) < untilMs).length,
+      "the filtered total must count only that service",
+    );
+    assert.ok(
+      filtered.reduce((sum, row) => sum + row.count, 0) <
+        unfiltered.reduce((sum, row) => sum + row.count, 0),
+      "the filtered total must be strictly smaller, or the filter was ignored",
+    );
+  } finally {
+    for (const service of [MS_SERVICE, MS_OTHER]) {
+      await client?.query("DELETE FROM logs WHERE service = $1", [service]).catch(() => undefined);
+      await client?.query("DELETE FROM logs_agg_1m WHERE service = $1", [service]).catch(() => undefined);
+    }
+    client?.release();
+    await pool.end();
+  }
+});
+
+test("aggregate cache: a fringe older than the millisecond window declines to SQL", async () => {
+  await withFixture(async ({ cached, direct, resetQueryCount, queryCount }) => {
+    // The seeded span is 45 minutes old, far outside the millisecond window,
+    // and hydration cannot reconstruct sub-second detail from a per-second
+    // GROUP BY. Answering this from the millisecond layer would return a
+    // partial sum; the only correct move is to decline.
+    const untilMs = baseMs + 90 * SECOND_MS + 137;
+    const since = new Date(baseMs).toISOString();
+    const until = new Date(untilMs).toISOString();
+    const filters = { since, until, attributes: {} };
+
+    resetQueryCount();
+    const fromCache = await cached.aggregate({ filters, bucket: "1m" });
+    assert.ok(
+      queryCount() > 0,
+      "a fringe predating the millisecond window must fall through to SQL, not answer from a partial sum",
+    );
+    assert.deepEqual(
+      fromCache,
+      await direct.aggregate({ filters, bucket: "1m" }),
+      "declining must still produce the exact SQL answer",
+    );
+  });
+});

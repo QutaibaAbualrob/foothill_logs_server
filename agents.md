@@ -65,6 +65,33 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
+- [x] **The millisecond edge layer — built and gated, awaiting run 7** —
+  2026-08-20, branch `perf/fringe-free-aggregate`. Entry 16 made the aggregate's
+  interior free and left its **edge** on SQL; under a clock-derived upper bound
+  that edge lands in the current second, which under load is never empty, so
+  every request issued a fragment. Demonstrated rather than assumed: both window
+  shapes run through `computeEdgeSlices` and `secondHasRows` give **0**
+  statements for a fixed-future bound and **1, on 10 of 10** for a clock-derived
+  one. A **total-only** per-millisecond layer over the last 10 s now answers the
+  partial second for unfiltered queries — ~15,000 numbers regardless of service
+  cardinality — while a *filtered* query with a live edge **declines** to SQL
+  rather than sum a total. No rollup and therefore no rollup bug: both layers are
+  written on ingest, and the interior reads only whole seconds while the edge
+  reads only the partial seconds the interior excludes. Also corrected: the
+  inverted-interior guard was too strict at `<=`; equal bounds tile the window
+  exactly, and only a strict inversion double-counts. Gates: 41/41 tests,
+  reliability 73/73, failure drill PASS. **Ten mutations injected, ten caught** —
+  two of them survived the first gate and drove new cases, because the fixture
+  never placed a row on a bound and the randomised sweep produces a sub-second
+  window only ~0.6% of the time. Local CLI **95.276**, correctness **15/15**,
+  inside the 94.933-95.787 band — but at machine speed **0.1246**, outside the
+  0.1190-0.1209 band every earlier run held, so its latency columns are **not
+  comparable** to them. That costs nothing here: under the local tester's
+  fixed-future window this change alters no code path at all, so the run is a
+  correctness gate and nothing more. Evidence:
+  [`aggregate-fringe.md`](test_results/aggregate-fringe.md), design decision 18.
+
+
 - [x] **Run 6: the in-process aggregate counters on the platform** — 2026-08-20,
   `feb71be` (kept on origin as `run6_73.63`). **73.63, up from 40.56 — a single
   commit worth more than every prior run combined.** Correctness **15/15** and
@@ -536,7 +563,10 @@ that is already finished. If a task turns out to be partly done, say which part.
 > **understate** the platform — local PostgreSQL reaches 72-76%, not 102.6% — so
 > the statement count is the load-bearing output and the p95 is a bonus.
 >
-> **(b) Run 7 — millisecond fringe counters.** A **total-only** millisecond
+> **(b) Run 7 — millisecond fringe counters. BUILT 2026-08-20; the paragraph
+> below is the spec it was built to, and it was followed except that the
+> ms->second rollup it warns about does not exist — writing both layers on
+> ingest removes the surface rather than testing it.** A **total-only** millisecond
 > layer over the last ~10 s, folded into the per-second map as slots age. A
 > *filtered* query with a live right fringe must **decline** to the existing SQL
 > fragment rather than answer from a total: every graded hot-path aggregate is

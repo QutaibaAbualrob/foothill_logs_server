@@ -528,8 +528,72 @@ not the sizing.
 
 ---
 
+## 18. The partial edge second is answered from memory too
+
+**Chosen:** a **total-only** per-millisecond layer covering the last 10 seconds
+(`RECENT_MS_WINDOW_MS`), written alongside the per-second counters on every
+committed row. An unfiltered query whose edge falls inside that window has its
+partial second summed exactly from memory; everything else keeps the existing
+SQL fragment.
+**Rejected:** per-key millisecond cells; folding millisecond slots into the
+per-second map as they age; giving the aggregate endpoint a connection pool of
+its own (see entry 17).
+**Why:** entry 16 made the interior free but not the edge. The per-second
+counters cannot answer an edge, because an edge is a *prefix* or *suffix* of one
+second — and when a caller derives the window's upper bound from the clock, that
+edge lands inside the **current** second, which at any real ingest rate is never
+empty. The "boundary second is empty" shortcut then never fires and every
+request issues a fragment. That statement is not expensive for what it reads; it
+is expensive for what it waits behind, which is every other reader on a
+two-connection pool.
+
+The mechanism was demonstrated rather than assumed, by running both window
+shapes through `computeEdgeSlices` and `secondHasRows`:
+
+| upper bound | statements per aggregate |
+| --- | ---: |
+| a fixed instant in the future | **0** |
+| read from the clock | **1, on 10 of 10** |
+
+**Total-only, deliberately.** One number per millisecond rather than a cell per
+(service, level): ~15,000 numbers regardless of how many services exist, where a
+per-key map would scale with cardinality and could push the cell valve that
+disables the whole cache. Every aggregate on the hot path is unfiltered, so a
+total answers all of them. **A filtered query with a live edge declines to SQL
+instead** — summing a total under a service or level filter would produce a
+confidently wrong number, which entry 16 names as this cache's whole risk.
+**No rollup, and therefore no rollup bug.** The millisecond layer is not a
+summary of the per-second one and never folds into it; both are written on
+ingest. The interior scan reads only whole seconds and the edge reads only the
+partial seconds the interior excludes, so no row can be counted by both. This
+was the obvious place for an off-by-one and the design removes the surface
+rather than testing it.
+**Also corrected here:** the guard that rejected a window with no whole-second
+interior was too strict. Only a *strictly* inverted interior is unsafe — when
+`alignedSince` and `alignedUntil` are equal the two edges abut exactly and tile
+the window, which happens for any window crossing a single second boundary, not
+merely for one narrower than a second.
+**Gives up:** ~15,000 map entries and a second write per ingested row; a
+filtered query with a live edge still costs one statement; and an edge older
+than 10 seconds always does, because hydration groups by second and cannot
+reconstruct sub-second detail.
+**Verified by:**
+[`test/integration/aggregate-cache.test.ts`](../test/integration/aggregate-cache.test.ts)
+— a clock-derived window asserted to issue **zero** statements, a filtered one
+asserted to decline to **exactly one**, a window with rows sitting on both
+bounds so a half-open range cannot be confused with a closed one, a sub-second
+window asserted not to double-count, and an edge predating the millisecond
+window asserted to decline rather than return a partial sum. **Ten mutations
+were injected and all ten failed the suite** — including two that survived an
+earlier version of the gate and drove the two extra cases above.
+**Evidence:** [`aggregate-fringe.md`](test_results/aggregate-fringe.md).
+
+---
+
 ## CHANGES
 
+- 2026-08-20: entry 18 added (millisecond edge layer; the inverted-interior
+  guard relaxed from `<=` to `<`). Entries 16 and 17 stand as written.
 - 2026-08-20: entry 17 added (read pool retained at 2 on replacement
   reasoning; entry 15's justifying measurement describes a workload that entry
   16 deleted). Entries 15 and 16 stand as written.
