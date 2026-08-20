@@ -22,6 +22,7 @@ export interface AppConfig {
   readonly syncCommit: SyncCommit;
   readonly shutdownTimeoutMs: number;
   readonly hotAttributeKeys: readonly string[];
+  readonly aggregateCache: boolean;
 }
 
 // An attribute key becomes part of an index name and an index expression, so it
@@ -96,6 +97,11 @@ export function loadConfig(): AppConfig {
     queueMaxBytes: integer("QUEUE_MAX_BYTES", 32 * 1024 * 1024, 1024 * 1024, 128 * 1024 * 1024),
     syncCommit: syncCommit(),
     shutdownTimeoutMs: integer("SHUTDOWN_TIMEOUT_MS", 15_000, 1_000, 120_000),
+    // On by default, and one environment variable away from off. The cache
+    // is the largest read-path change in the service and the only one whose
+    // failure mode is a wrong answer rather than a slow one, so it ships with
+    // a switch that does not need a rebuild to reach.
+    aggregateCache: (process.env.AGGREGATE_CACHE ?? "on") !== "off",
     hotAttributeKeys: hotAttributeKeys(),
   };
 }

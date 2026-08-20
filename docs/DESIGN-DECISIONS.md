@@ -438,8 +438,63 @@ reliability checks cover the degradation path but not the sizing.
 
 ---
 
+## 16. The aggregate endpoint answers from in-process counters
+
+**Chosen:** a per-second counter map held in the application process
+(`src/aggregate/counters.ts`), hydrated from the raw `logs` table **before the
+listener opens**, incremented after each flush commits and before the ingest
+request resolves. Ungrouped aggregate queries whose window the counters cover
+are answered from memory; each partial edge second is resolved by at most one
+sub-second statement, and that statement is skipped entirely when the counters
+already prove the boundary second empty.
+**Rejected:** counting per minute rather than per second; serving grouped
+queries from memory; removing `logs_agg_1m` and the flush-path rollup upsert.
+**Why:** entry 14 removed two of the three statements an aggregate issued, but
+not the work inside the one that remains. A window whose left edge lands in live
+traffic makes that edge a scan of up to a **full minute** of rows — at
+15,000 logs/s, hundreds of thousands of them — while the whole-minute interior
+it surrounds is a few hundred rollup rows. The expensive part of the query was
+never the interior; it was the edge. Counting by second shrinks the scanned edge
+by 60x, and when the boundary second holds nothing the scan disappears.
+Per-minute counters would have left the edge exactly as expensive and bought
+nothing. Grouped queries stay on SQL because a grouped result must order by the
+group value, the database collates text as `en_US.utf8`, and reproducing that
+ordering in JavaScript is a correctness risk taken for no gain — the aggregate
+callers on the hot path do not group.
+**Gives up:** a second source of truth for counts, which is the whole risk. The
+counters and SQL must agree exactly or the endpoint returns a confidently wrong
+number, and a wrong count is worse than a slow one. Also memory — bounded by a
+two-hour window and a 1,000,000-cell valve that disables the cache rather than
+grow without limit. And, deliberately, **nothing on the write path changes**:
+the rollup upsert still runs inside every flush transaction, so this buys read
+latency and not write throughput. Removing it is a separate decision with a
+separate risk, and it is not taken here.
+**Coverage is a lower bound only, on purpose.** There is no upper-bound test.
+The counters observe every row the process commits, so a window ending in the
+future is covered and simply empty past the newest row. A client draining the
+log sets `until` slightly ahead of now, so a rule requiring the window to end at
+or before the newest data would have routed exactly that caller back to SQL —
+not a failure, just a silent no-op that would have looked like success.
+**Verified by:**
+[`test/integration/aggregate-cache.test.ts`](../test/integration/aggregate-cache.test.ts)
+against a live database: 120 randomised windows, filters and bucket sizes
+compared row-for-row against both the SQL path and independently computed SQL
+truth, plus day buckets, a window ending 60 s past the newest row, an unknown
+service that must return a valid empty body, and a coverage floor that must
+decline. The suite asserts the **mechanism** as well as the answer — a counting
+pool proves a covered second-aligned window issues **zero** statements, because
+a cache that quietly declined every query would satisfy parity perfectly and buy
+nothing. The gate was mutation-tested: an off-by-one second in the interior
+scan, a dropped edge fragment, an ignored coverage floor and an ignored service
+filter were each introduced in turn and each failed the suite.
+**Evidence:** [`aggregate-cache.md`](test_results/aggregate-cache.md).
+
+---
+
 ## CHANGES
 
+- 2026-08-20: entry 16 added (in-process aggregate counters). It changes
+  the read path only; entry 15's write-path cost stands unaddressed.
 - 2026-08-20: entries 14 and 15 added (one-round-trip aggregate; read pool
   and timeout resized, with the read-side cost recorded). Entry 15 supersedes
   the pool and timeout figures in entry 8, which is left as written.

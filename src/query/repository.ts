@@ -1,4 +1,5 @@
 import type { Pool, QueryResultRow } from "pg";
+import type { AggregateCounters } from "../aggregate/counters.js";
 import { HttpError } from "../errors.js";
 import { isDatabaseUnavailable } from "../db/pools.js";
 import type { Attributes, LogLevel, LogResult } from "../types.js";
@@ -25,6 +26,18 @@ const BUCKET_SECONDS = { "1m": 60, "5m": 300, "1h": 3_600, "1d": 86_400 } as con
 
 const MINUTE_MS = 60_000;
 
+const SECOND_MS = 1_000;
+
+/**
+ * A bucket start in exactly the form the SQL path emits. Buckets are always a
+ * whole number of seconds and never finer than a minute, so the fractional
+ * part is always zero — but it has to carry six digits, because to_char writes
+ * microseconds and the two paths must agree byte for byte.
+ */
+function formatBucketStart(epochSeconds: number): string {
+  return `${new Date(epochSeconds * SECOND_MS).toISOString().slice(0, -1)}000Z`;
+}
+
 export interface EdgeSlices {
   readonly alignedSince: string;
   readonly alignedUntil: string;
@@ -33,12 +46,14 @@ export interface EdgeSlices {
 }
 
 /**
- * Splits [since, until) into a whole-minute interior plus at most two
- * partial edge minutes (plan §6 "Exact edges").
+ * Splits [since, until) into a whole-unit interior plus at most two partial
+ * edges (plan §6 "Exact edges"). `unitMs` defaults to a minute, which is the
+ * rollup table's granularity; the in-process counters pass a second.
  *
- * alignedSince is `since` rounded UP to the next minute boundary and
- * alignedUntil is `until` rounded DOWN, so the rollup table — which only
- * stores whole minutes — can answer [alignedSince, alignedUntil) directly.
+ * alignedSince is `since` rounded UP to the next unit boundary and
+ * alignedUntil is `until` rounded DOWN, so a store that only holds whole
+ * units — the rollup table, or the counters — can answer
+ * [alignedSince, alignedUntil) directly.
  * Whatever is left over on either side must come from the raw table, so a
  * whole edge minute is never counted into a range that does not contain it.
  * When the whole range sits inside one minute, alignedSince >= alignedUntil
@@ -51,22 +66,26 @@ export interface EdgeSlices {
  * which rounds the boundary to the correct side — the same precision class
  * the cursor design defends against.
  */
-export function computeEdgeSlices(sinceIso: string, untilIso: string): EdgeSlices {
+export function computeEdgeSlices(
+  sinceIso: string,
+  untilIso: string,
+  unitMs: number = MINUTE_MS,
+): EdgeSlices {
   const sinceMs = Date.parse(sinceIso);
   const untilMs = Date.parse(untilIso);
   // Date.parse truncates to milliseconds while PostgreSQL stores microseconds:
-  // a value whose ms-truncation lands exactly on a minute boundary may still
+  // a value whose ms-truncation lands exactly on a unit boundary may still
   // be strictly past it (or before it) when non-zero sub-ms digits exist.
-  const sinceOnBoundary = sinceMs % MINUTE_MS === 0;
-  const untilOnBoundary = untilMs % MINUTE_MS === 0;
+  const sinceOnBoundary = sinceMs % unitMs === 0;
+  const untilOnBoundary = untilMs % unitMs === 0;
   const sinceSubMs = hasNonZeroSubMilliseconds(sinceIso);
   const untilSubMs = hasNonZeroSubMilliseconds(untilIso);
-  // First whole minute >= the true since: normally the ceil of the ms value,
+  // First whole unit >= the true since: normally the ceil of the ms value,
   // but a boundary value with sub-ms digits is strictly past that boundary,
   // so the next boundary is the first one that contains the true instant.
   const alignedSinceMs =
-    sinceOnBoundary && sinceSubMs ? sinceMs + MINUTE_MS : Math.ceil(sinceMs / MINUTE_MS) * MINUTE_MS;
-  const alignedUntilMs = Math.floor(untilMs / MINUTE_MS) * MINUTE_MS;
+    sinceOnBoundary && sinceSubMs ? sinceMs + unitMs : Math.ceil(sinceMs / unitMs) * unitMs;
+  const alignedUntilMs = Math.floor(untilMs / unitMs) * unitMs;
   return {
     alignedSince: new Date(alignedSinceMs).toISOString(),
     alignedUntil: new Date(alignedUntilMs).toISOString(),
@@ -87,6 +106,7 @@ export class PgLogQueryRepository {
     private readonly pool: Pool,
     private readonly cursors: CursorCodec,
     private readonly hotAttributeKeys: readonly string[] = [],
+    private readonly counters?: AggregateCounters,
   ) {}
 
   public async list(query: ParsedLogQuery): Promise<{ logs: LogResult[]; nextCursor: string | null }> {
@@ -144,6 +164,15 @@ export class PgLogQueryRepository {
       query.filters.q === undefined &&
       Object.keys(query.filters.attributes).length === 0;
     try {
+      // The counters carry the same dimensions the rollup does, so they are
+      // gated on the same filters — plus one more. Grouped queries stay on SQL:
+      // a grouped result has to order by the group value, and reproducing the
+      // database's text collation in JavaScript is a correctness risk taken for
+      // no gain, because the aggregate callers on the hot path do not group.
+      if (canUseRollup && query.groupBy === undefined) {
+        const cached = await this.aggregateFromCounters(query);
+        if (cached !== null) return cached;
+      }
       const rows = canUseRollup
         ? await this.aggregateWithEdgeSlices(query)
         : await this.aggregateRaw(query);
@@ -156,6 +185,101 @@ export class PgLogQueryRepository {
       if (isDatabaseUnavailable(error)) throw new HttpError(503, "database is unavailable", 1);
       throw error;
     }
+  }
+
+  /**
+   * Answers from the in-process counters, or null when they cannot answer
+   * exactly and the SQL path has to run.
+   */
+  private async aggregateFromCounters(query: ParsedAggregateQuery): Promise<AggregateResult[] | null> {
+    const counters = this.counters;
+    if (counters === undefined || !counters.enabled) return null;
+
+    const { since, until, service, level } = query.filters;
+    const sinceMs = Date.parse(since);
+    const untilMs = Date.parse(until);
+    if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs)) return null;
+    // Coverage is a lower bound and nothing else. There is deliberately no
+    // upper-bound test: the counters see every row this process commits, so a
+    // window ending in the future is covered, and simply empty past the newest
+    // row. A client draining the log sets until slightly in the future, so a
+    // rule requiring the window to end at or before the newest data would
+    // silently route exactly that caller back to SQL and buy nothing.
+    if (!counters.covers(sinceMs)) return null;
+
+    const edges = computeEdgeSlices(since, until, SECOND_MS);
+    const interiorFromSec = Date.parse(edges.alignedSince) / SECOND_MS;
+    const interiorToSec = Date.parse(edges.alignedUntil) / SECOND_MS;
+    // A window narrower than the second containing it has no whole-second
+    // interior, and its two edges would overlap rather than abut. Not a shape
+    // the hot path produces, and the SQL path answers it correctly.
+    if (interiorToSec <= interiorFromSec) return null;
+
+    const bucketSeconds = BUCKET_SECONDS[query.bucket];
+    const totals = new Map<string, number>();
+    const interior = counters.scan(interiorFromSec, interiorToSec, service, level, bucketSeconds);
+    for (const [startSec, count] of interior) {
+      totals.set(formatBucketStart(startSec), count);
+    }
+
+    // Each partial edge is at most one second of rows, and the counters already
+    // know whether that second holds any. When it does not, the fragment is
+    // dropped — which is what takes the common drain window to zero queries.
+    const fragments: { readonly since: string; readonly until: string }[] = [];
+    if (edges.hasLeft && counters.secondHasRows(Math.floor(sinceMs / SECOND_MS), service, level)) {
+      fragments.push({ since, until: edges.alignedSince });
+    }
+    if (edges.hasRight && counters.secondHasRows(Math.floor(untilMs / SECOND_MS), service, level)) {
+      fragments.push({ since: edges.alignedUntil, until });
+    }
+    if (fragments.length > 0) {
+      for (const row of await this.aggregateRawUnion(query, fragments)) {
+        totals.set(row.start, (totals.get(row.start) ?? 0) + safeCount(row.count));
+      }
+    }
+
+    // A fixed-width UTC ISO-8601 start sorts identically as text and as an
+    // instant, so ordering needs no collation — which is the reason grouped
+    // queries are not served from here at all.
+    return [...totals]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([start, count]) => ({ start, group: null, count }));
+  }
+
+  /**
+   * The given raw ranges as a single statement. Only the ungrouped shape is
+   * built, because that is the only shape the counters serve.
+   */
+  private async aggregateRawUnion(
+    query: ParsedAggregateQuery,
+    bounds: readonly { readonly since: string; readonly until: string }[],
+  ): Promise<AggregateRow[]> {
+    const seconds = BUCKET_SECONDS[query.bucket];
+    const values: unknown[] = [];
+    const branches = bounds.map((range) => {
+      const predicates = buildPredicates(
+        { ...query.filters, since: range.since, until: range.until },
+        undefined,
+        this.hotAttributeKeys,
+        values.length,
+      );
+      values.push(...predicates.values);
+      return `SELECT to_timestamp(floor(extract(epoch FROM timestamp) / ${String(seconds)}) * ${String(seconds)}) AS bucket,
+                     COUNT(*)::bigint AS total
+              FROM logs
+              ${predicates.sql}
+              GROUP BY 1`;
+    });
+    const result = await this.pool.query<AggregateRow>(
+      `SELECT to_char(bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start,
+              NULL::text AS group_value,
+              SUM(total)::text AS count
+       FROM (${branches.join(" UNION ALL ")}) parts
+       GROUP BY 1
+       ORDER BY 1 ASC`,
+      values,
+    );
+    return result.rows;
   }
 
   /**

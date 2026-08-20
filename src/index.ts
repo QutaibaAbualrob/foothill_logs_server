@@ -1,3 +1,4 @@
+import { AggregateCounters } from "./aggregate/counters.js";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { closePools, createPools, probeDatabase, withDatabaseRetry } from "./db/pools.js";
@@ -28,9 +29,10 @@ await withDatabaseRetry(() => probeDatabase(pools.query), {
 });
 
 const cursors = new CursorCodec(config.cursorSecret);
+const counters = config.aggregateCache ? new AggregateCounters() : undefined;
 const writes = new PgLogWriteRepository(pools.write, config.syncCommit);
-const batcher = new WriteBatcher(writes, config);
-const queries = new PgLogQueryRepository(pools.query, cursors, config.hotAttributeKeys);
+const batcher = new WriteBatcher(writes, config, counters);
+const queries = new PgLogQueryRepository(pools.query, cursors, config.hotAttributeKeys, counters);
 const retention = new RetentionWorker(pools.maintenance, config);
 const app = createApp({
   pools,
@@ -50,6 +52,14 @@ app.server.keepAliveTimeout = 65_000;
 app.server.headersTimeout = 66_000;
 app.server.requestTimeout = 30_000;
 
+// Before the socket opens, not merely before `ready`. Hydration is a
+// projection of the table taken at an instant when no request can be in
+// flight; opening the listener first would leave a window where a write could
+// land between the read and the counters going live, and be counted twice or
+// not at all. A failure inside hydrate() disables the cache and returns
+// normally — the SQL path answers everything on its own.
+await counters?.hydrate(pools.query);
+
 await app.listen({ port: config.port, host: "0.0.0.0" });
 ready = true;
 // Retention is a background maintenance concern: if it cannot acquire its lock
@@ -66,6 +76,7 @@ console.log(JSON.stringify({
   syncCommit: config.syncCommit,
   writePool: config.writePoolSize,
   queryPool: config.queryPoolSize,
+  aggregateCache: counters?.enabled ?? false,
 }));
 
 async function shutdown(signal: string): Promise<void> {

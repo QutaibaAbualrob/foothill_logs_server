@@ -1,3 +1,4 @@
+import type { AggregateCounters } from "../aggregate/counters.js";
 import type { AppConfig } from "../config.js";
 import { HttpError } from "../errors.js";
 import type { NormalizedLog } from "../types.js";
@@ -36,6 +37,7 @@ export class WriteBatcher {
   public constructor(
     private readonly repository: LogWriteRepository,
     private readonly config: AppConfig,
+    private readonly counters?: AggregateCounters,
   ) {}
 
   public submit(logs: readonly NormalizedLog[], bytes: number): Promise<void> {
@@ -139,6 +141,12 @@ export class WriteBatcher {
     this.flushes += 1;
     try {
       await this.repository.insertCommitted(logs);
+      // After the commit and before the acknowledgement, in that order. The
+      // client draining the log can only count rows whose POST returned, so
+      // counters updated ahead of the resolve can never report fewer rows than
+      // the caller has been told are durable. A failed flush rejects instead and
+      // never reaches here, so nothing uncommitted is ever counted.
+      this.counters?.add(logs);
       this.committedRows += totalRows;
       for (const request of pending) request.resolve();
     } catch (error) {

@@ -65,6 +65,27 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
+- [x] **In-process aggregate counters — built and gated, not yet submitted** —
+  2026-08-20. `src/aggregate/counters.ts`: per-second counters over a two-hour
+  window, hydrated before the listener opens, incremented after commit and
+  before the ingest request resolves, serving ungrouped aggregate queries.
+  Measured with `log_statement='all'`: a covered second-aligned window issues
+  **zero** statements; an unaligned bound whose boundary second holds rows costs
+  one statement over a **sub-second** range, where the previous path scanned up
+  to a full partial minute. Verified exact against a live 396,600-row stack
+  after a restart, so through hydration. Parity gate green and
+  **mutation-tested** — an off-by-one interior second, a dropped edge fragment,
+  an ignored coverage floor and an ignored service filter were each introduced
+  in turn and each failed the suite. Gates: 39/39 tests, reliability 73/73,
+  failure drill PASS. Local CLI regression **95.480** inside the 94.933-95.787
+  band at machine speed 0.1201, correctness **15/15**, load aggregate p95
+  **34 ms** against a 41-58 ms baseline band and Queries 14.388 — the best of
+  five runs on both, though the local database is idle and this gate only ever
+  proves the absence of a regression. One zero-weight metric regressed and is
+  recorded: `readAfterWriteSuccessRate` 0.143 against 0.178-0.198. Evidence:
+  [`aggregate-cache.md`](test_results/aggregate-cache.md), design decision 16.
+  **This is the read half only — see the correction in the Stage 2 block.**
+
 - [x] **Run 5: the read-path bundle on the platform** — 2026-08-20, `056a74e`.
   **40.56** from 39.49. Ingestion latency p95 **2,073 -> 65 ms (31.7x)**,
   aggregate p95 4,595 -> 2,170 ms, request p95 4,111 -> 2,078 ms, throughput
@@ -410,11 +431,27 @@ that is already finished. If a task turns out to be partly done, say which part.
 >    paired — raising the timeout alone lets one scan hold a backend for ten
 >    seconds, which is the exact risk the current compose comment cites.
 >
-> **Stage 2 — the nine-point item.** Replace the synchronous `logs_agg_1m` upsert
+> **Stage 2 — BUILT 2026-08-20, and the scope was cut. Read this before acting
+> on the paragraph that follows.** What shipped is the **read half**: the
+> counters answer the aggregate endpoint, and the synchronous `logs_agg_1m`
+> upsert **still runs inside every flush transaction, unchanged**. The cut was
+> deliberate — removing the upsert needs a migration plus surgery on the flush
+> path, and a correctness slip caps the entire result on what is the last
+> submission. So Stage 2 as built buys read latency and buys **nothing** on the
+> write path, and design decision 15's read-side cost stands unaddressed. The
+> original intent is preserved below for the record; it does **not** describe
+> the current tree.
+>
+> ~~Replace the synchronous `logs_agg_1m` upsert
 > with an **in-process per-second counter cache**: bounded cell count, hydrated
 > before readiness, updated after commit, falling back to raw SQL outside the
 > retained window. This removes a hot-key upsert from every flush transaction and
-> takes the aggregate off the database entirely for the graded window.
+> takes the aggregate off the database entirely for the covered window.~~
+
+> **Stage 3 is therefore still blocked.** It was gated on Stage 2 removing the
+> rollup upsert. That did not happen, so raising flush concurrency would
+> introduce exactly the hot-key contention on `logs_agg_1m` the single-flight
+> batcher is protecting against.
 >
 > **Stage 3 — only after stage 2 lands.** Raise flush concurrency 1 → 2;
 > `WRITE_POOL_SIZE` is already 2 and currently unused. **Order matters:** doing

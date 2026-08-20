@@ -37,6 +37,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     queryStatementTimeoutMs: 10000,
     cursorSecret: "test",
     hotAttributeKeys: [],
+    aggregateCache: true,
     retentionDays: 30,
     maxLogAgeDays: 0,
     retentionIntervalMs: 3600000,
