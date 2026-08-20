@@ -65,6 +65,16 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
+- [x] **Run 5: the read-path bundle on the platform** — 2026-08-20, `056a74e`.
+  **40.56** from 39.49. Ingestion latency p95 **2,073 -> 65 ms (31.7x)**,
+  aggregate p95 4,595 -> 2,170 ms, request p95 4,111 -> 2,078 ms, throughput
+  +24%. The whole +1.07 is the throughput component; errors and latency still
+  clamp to zero, and the **error rate got worse** (20.9% -> 27.5%). Attribution
+  was deliberately spent — three changes shipped in one submission, so the 31.7x
+  belongs to the bundle. Evidence:
+  `docs/test_results/run5-read-path.md`, `docs/run5_results/`,
+  DESIGN-DECISIONS entries 14 and 15.
+
 - [x] **Batch-33 point on the batch curve** — 2026-08-17. 8,169.8 logs/s, 0
   errors, ingest p50/p95 378/604 ms, api container at 47.9% of its 50% cap while
   postgres kept ~60% of its own in reserve. The whole 33/50/200/500 curve was
@@ -353,6 +363,37 @@ that is already finished. If a task turns out to be partly done, say which part.
 > standard rule 8 biting us in the direction it warns about. **A platform
 > submission is now the instrument**, and the local CLI is the regression gate.
 >
+> **RUN 5 RESULT (2026-08-20, `056a74e`): 40.56, up 1.07.** Stage 1 shipped and
+> the read path is confirmed as a real constraint — ingestion p95 fell 31.7x to
+> 65 ms and both read latencies halved. But every latency-gated bucket is still
+> past its cliff, so the entire gain is the throughput component. Three facts
+> from that run govern what comes next:
+>
+> 1. **The request mix is exactly 1 POST + 2 GETs.**
+>    `http_requests / (accepted_logs / 100)` is 3.0000 in all eight scenario-runs
+>    across runs 4 and 5. With POST success at 100%, every failure is a GET, so
+>    `GET failure = error rate x 1.5` — **41.2% of reads fail** on load.
+> 2. **GET failure is not driven by aggregate latency.** The spike scenario
+>    halved its aggregate p95 (4,398 -> 2,104 ms) with its GET failure rate
+>    unchanged at 8.7%, while the three high-rate scenarios worsened as latency
+>    fell. Failures track offered load. The working hypothesis is connection
+>    contention on a two-slot read pool; it is **untested**.
+> 3. **Cutting request latency does not widen the offer on load.** The
+>    generator's VU pool is `max(preAllocatedVUs, latency-derived)`, and on load
+>    preAlloc (150) wins over the latency term (113). That coupling binds only in
+>    stress.
+>
+> **Next: the in-process aggregate, and it is the last submission.** It is the
+> only remaining lever on the 500 ms aggregate cliff, and it tests the contention
+> hypothesis directly by removing aggregates from the connection pool entirely.
+> The 9 aggregate points are well-founded; the 15 error points are a hypothesis
+> and must not be written up as a projection.
+>
+> **The fallback is gone.** The one-round-trip aggregate was the safe thing to
+> ship if the cache failed its parity gate — it already shipped in run 5. If
+> parity is not green there is nothing else to send, so the parity test, not the
+> cache code, is where the care belongs.
+
 > **Staged, one submission per stage, so a delta can be attributed.**
 >
 > **Stage 1 — two config lines, no code.**

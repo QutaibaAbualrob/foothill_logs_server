@@ -371,10 +371,78 @@ shedding path (503 + `Retry-After`).
 `bench/results/2026-08-18-wal-tuning/`, `docker-compose.yml` (both settings
 carry their reasoning inline).
 
+## 14. The aggregate is answered in one round trip
+
+**Chosen:** the rollup interior and both partial edge minutes compose into a
+single `UNION ALL` statement whose outer `GROUP BY` sums them.
+**Rejected:** issuing the three queries concurrently with `Promise.all`; keeping
+them sequential.
+**Why:** the requested range is almost never minute-aligned, so both edges are
+present on essentially every real request and the path issued three statements.
+Individually they are cheap — the rollup holds ~1,080 rows and an edge covers at
+most one partial minute — but each is a separate pool acquisition that queues
+for the database CPU behind whatever flush is in flight. Three of those
+serialise into a latency no single query explains. `UNION ALL` reduces that to
+one wait holding one connection. `Promise.all` reaches two waits rather than
+one, and with a two-connection read pool a single aggregate would hold **both**
+connections and starve every concurrent `/logs` reader for its duration;
+sequential edges at least left one free.
+**Gives up:** hand-written composed SQL in place of a JavaScript merge, so the
+correctness surface is larger. The parameter numbering across branches is the
+sharp edge — `buildPredicates` gained a `parameterOffset` so each branch
+continues the shared sequence instead of restarting at `$1`.
+**Verified by:** [`test/integration/aggregate.test.ts`](../test/integration/aggregate.test.ts)
+against a live database — aligned and unaligned ranges and the raw-forced path
+all compared to independently computed SQL truth, plus day buckets, a window
+ending 60 s past the newest row, and an unknown service that must return a valid
+empty body. The first version of this query failed that suite with a `42803` on
+an ungrouped `group_value`, which is exactly the class of error a typecheck
+cannot catch. `EXPLAIN` confirms one `Append` and `Subplans Removed: 6`, so
+partition pruning survives the rewrite.
+**Evidence:** [`run5-read-path.md`](test_results/run5-read-path.md),
+`docs/test_results/benchmark-report-stage1.json`.
+
+## 15. Read pool cut to 2 and the read timeout set to 8 s — with a measured cost
+
+**Chosen:** query pool **2** (was 8); read statement timeout **8,000 ms** (was
+5,000). This supersedes the pool and timeout figures in entry 8, which stands as
+written.
+**Rejected:** leaving the pool at 8; raising the timeout to the 10,000 ms code
+default.
+**Why:** eight concurrent unindexed reads were measured returning all eight HTTP
+500s at 5.05 s — a pool wider than the database can serve converts queueing into
+failures rather than throughput. The database runs at ~78% of its single CPU
+while the application uses under 8% of its own, so the pool belongs sized to the
+database. The timeout is 8 s and not 10 s because the visibility probe in the
+benchmark harness abandons its request at a hard 10 s client-side deadline: at
+10 s our statement timeout races that deadline and can lose, returning nothing
+usable, whereas below it we always answer first and a late-but-valid aggregate
+still counts.
+**Gives up — and this is the part not to gloss:** the read side paid for it. In
+the same submission that ingestion latency p95 fell 2,073 -> 65 ms, the load
+scenario's GET failure rate **rose from 31.4% to 41.2%**. Failures track offered
+load, not query latency — the spike scenario halved its aggregate latency with
+its GET failure rate unchanged at 8.7%. The likely mechanism is that two
+connections cannot retire reads fast enough at 15,000 logs/s. **This is not a
+clean win and must not be recorded as one.**
+**Not independently attributable:** this shipped in one submission alongside
+entry 14, deliberately, because platform submissions are the only instrument
+that can measure either and they are scarce. Cutting the pool frees database CPU
+for writers; so does removing two of every three read statements. Neither can be
+separated from the other, and the 31.7x belongs to the pair.
+**Verified by:** no automated guard. Both values are compose-file settings with
+their reasoning inline; nothing fails if they are changed. The failure drill and
+reliability checks cover the degradation path but not the sizing.
+**Evidence:** [`run5-read-path.md`](test_results/run5-read-path.md),
+`docker-compose.yml`.
+
 ---
 
 ## CHANGES
 
+- 2026-08-20: entries 14 and 15 added (one-round-trip aggregate; read pool
+  and timeout resized, with the read-side cost recorded). Entry 15 supersedes
+  the pool and timeout figures in entry 8, which is left as written.
 - 2026-08-18: entry 13 added (WAL settings, items 4 and 5).
 - 2026-08-18: created. Twelve entries assembled from the existing architecture,
   results and plan files, reorganised by decision rather than by component or
