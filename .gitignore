@@ -29,6 +29,3 @@ bench/results/**/raw/
 bench/results/**/profiles/
 *.cpuprofile
 *.cpuprofile.gz
-# Submission URLs for graded runs are the owner's, not repository content.
-# Already-tracked link files from earlier runs are unaffected by this rule.
-docs/run*_results/*link*.txt
