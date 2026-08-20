@@ -65,7 +65,22 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
-- [x] **In-process aggregate counters — built and gated, not yet submitted** —
+- [x] **Run 6: the in-process aggregate counters on the platform** — 2026-08-20,
+  `feb71be` (kept on origin as `run6_73.63`). **73.63, up from 40.56 — a single
+  commit worth more than every prior run combined.** Correctness **15/15** and
+  Reliability **20/20** both held. The entire gain is Performance
+  5.56 -> **38.63**, from two components that were clamped at zero and are now
+  maxed or close: **error rate 27.48% -> 0.00%** and throughput
+  **4,169 -> 14,285 logs/s (3.4x)**. Request p95 2,078 -> 588 ms, ingestion p95
+  65 -> 72 ms, PostgreSQL CPU 78.21% -> 76.17% average — 3.4x the work at
+  slightly *less* database CPU. **Queries is still 0.00/15**: aggregate p95
+  **604 ms** against a 500 ms cliff, missed by 104 ms, and eventual consistency
+  invalid on all four scenarios. Raw report in `docs/run6_results_improvement/`.
+  A `docs/test_results/` write-up and a DESIGN-DECISIONS entry are **still
+  outstanding** for this run.
+
+
+- [x] **In-process aggregate counters — built, gated, and shipped in run 6** —
   2026-08-20. `src/aggregate/counters.ts`: per-second counters over a two-hour
   window, hydrated before the listener opens, incremented after commit and
   before the ingest request resolves, serving ungrouped aggregate queries.
@@ -85,6 +100,8 @@ that is already finished. If a task turns out to be partly done, say which part.
   recorded: `readAfterWriteSuccessRate` 0.143 against 0.178-0.198. Evidence:
   [`aggregate-cache.md`](test_results/aggregate-cache.md), design decision 16.
   **This is the read half only — see the correction in the Stage 2 block.**
+  Submitted as run 6; the local gate under-predicted it badly, which is worth
+  remembering the next time a local run says "no change within noise".
 
 - [x] **Run 5: the read-path bundle on the platform** — 2026-08-20, `056a74e`.
   **40.56** from 39.49. Ingestion latency p95 **2,073 -> 65 ms (31.7x)**,
@@ -399,21 +416,91 @@ that is already finished. If a task turns out to be partly done, say which part.
 >    unchanged at 8.7%, while the three high-rate scenarios worsened as latency
 >    fell. Failures track offered load. The working hypothesis is connection
 >    contention on a two-slot read pool; it is **untested**.
+>
+>    **FALSIFIED BY RUN 6, and read this before reusing it.** Removing the
+>    aggregate's database work took the error rate to **0.00%** while throughput
+>    rose 3.4x at unchanged PostgreSQL CPU. Failures never tracked offered load;
+>    the aggregate's own SQL was starving the writers and the other readers, and
+>    the spike counterexample was measuring a scenario that was not
+>    aggregate-bound. The contention hypothesis was right, in a sharper form
+>    than it was stated.
 > 3. **Cutting request latency does not widen the offer on load.** The
 >    generator's VU pool is `max(preAllocatedVUs, latency-derived)`, and on load
 >    preAlloc (150) wins over the latency term (113). That coupling binds only in
 >    stress.
 >
-> **Next: the in-process aggregate, and it is the last submission.** It is the
-> only remaining lever on the 500 ms aggregate cliff, and it tests the contention
-> hypothesis directly by removing aggregates from the connection pool entirely.
-> The 9 aggregate points are well-founded; the 15 error points are a hypothesis
-> and must not be written up as a projection.
+> **RUN 6 RESULT (2026-08-20, `feb71be`): 73.63, up 33.07.** Correctness and
+> reliability held at maximum; the whole gain is Performance. Five facts govern
+> what comes next, and three of them replace earlier reasoning.
 >
-> **The fallback is gone.** The one-round-trip aggregate was the safe thing to
-> ship if the cache failed its parity gate — it already shipped in run 5. If
-> parity is not green there is nothing else to send, so the parity test, not the
-> cache code, is where the care belongs.
+> 1. **The aggregate's own cost is gone. What is left is everyone's cost.**
+>    Aggregate p95 604 ms against overall request p95 588 ms — a **16 ms** gap,
+>    where run 5's was 92 ms. The aggregate is no longer an aggregate problem;
+>    it now pays exactly the queueing every endpoint pays.
+> 2. **The performance probe issues ZERO SQL statements.** Verified by running
+>    both graded window shapes through `computeEdgeSlices` and
+>    `secondHasRows`: that probe's window is `[until - 1h, until]` with
+>    `until = run start + duration + 60s`, so its left edge sits ~58 minutes
+>    *before* the run and its right edge ~60 s *after* it. Both boundary seconds
+>    are empty, both fragments are skipped. **So the 604 ms is not database work
+>    — do not go looking for the aggregate's pool waits, there are none.** The
+>    drain probe is different: its `since` is the scenario start, which does land
+>    in live traffic, so it issues one sub-second statement.
+> 3. **The read path is carrying ~25x the load the local harness applies.** The
+>    platform's request ratio is exactly 3.0 per POST, so 143 POST/s becomes
+>    **286 GET/s**; the local script issues ~11.5 GET/s (4/s aggregate plus a
+>    1-in-20 sampled probe). 286 GET/s through a **two-connection** pool needs
+>    sub-7 ms service time to stay stable, and it is not stable. That single
+>    fact is the shared cause of the aggregate cliff, the latency bucket and the
+>    eventual-consistency drain rate. It also explains why the local CLI reported
+>    aggregate p95 34 ms at the same throughput on slower hardware.
+> 4. **The sustained bonus reads the STRESS scenario, not load.**
+>    `sustainedLogsPerSecond` is the stress scenario's `logsPerSecond`, with
+>    tiers at 20,000 and 25,000 against a 0.99 tolerance — so **19,800** and
+>    **24,750**. Stress offers up to 30,000/s, so these 5 points are reachable;
+>    they were previously assumed dead because load only offers 15,000/s. We
+>    manage 20,562/s locally and **13,558/s** on the platform.
+> 5. **Errors are 15 points, we hold all of them, and each 1% costs 5.36.** That
+>    is more than the entire remaining latency bucket is worth. **Any change that
+>    risks reintroducing errors in order to buy latency is a losing trade** —
+>    which is the hard guardrail on widening the read pool.
+>
+> **Where the remaining ~24 points are:**
+>
+> | bucket | now | ceiling | worth |
+> | --- | --- | --- | ---: |
+> | Queries — aggregate p95 | 604 ms | zero above 500 ms | **9.00** |
+> | Queries — eventual consistency | 0 of 4 | 1.5 per scenario | **6.00** |
+> | Performance — latency p95 | 588 ms | full marks at 100 ms | **5.42** |
+> | Performance — sustained bonus | stress 13,558/s | 19,800 / 24,750 | **5.00** |
+> | Performance — throughput | 14,285/s | clamps at 15,000/s | **0.95** |
+> | Performance — errors | 0.00% | **maxed — defend it** | 0 |
+>
+> **"The last submission" was wrong and is withdrawn.** It came from an early
+> planning assumption, not from anything the platform enforces, and six runs have
+> now been made. The one-change-per-submission discipline is affordable again, so
+> prefer an attributable delta over a bundle.
+>
+> **Next, in order.** (a) Record run 6 — write-up and a DESIGN-DECISIONS entry.
+> (b) Settle why the drain probe fails on the platform when it succeeds locally:
+> replay the two probe URLs by hand against a loaded stack. It is the cheapest
+> experiment here and it decides whether the 6 eventual-consistency points are
+> near-free or need a ~20x page-rate rewrite. (c) Attack `/logs` read
+> throughput — it is the shared cause of items 1, 2 and 3 above — measuring one
+> change at a time, and never at the cost of the error rate.
+>
+> **Design decision 15 needs a follow-up entry, not an edit.** Its justification
+> for `QUERY_POOL_SIZE: 2` was "eight concurrent unindexed reads returned all
+> eight HTTP 500". Those reads were aggregates, and they no longer touch the
+> database — the pool is currently sized for a query shape that has been deleted.
+> Re-derive the size against the read mix that actually exists now.
+>
+> **Migration 004 has met its own re-measure condition.** It did *not* assume
+> the workload never filters by service — it measured a service-filtered cursor
+> walk at 12.6-13.1 pages/s before against 12.4-14.4 after. What it conditioned
+> on was table size: "if a future workload pages heavily by service or level
+> under a much larger table, re-measure". The drain filters by service on every
+> page, over 1.7-2.0M live rows. That condition is now met.
 
 > **Staged, one submission per stage, so a delta can be attributed.**
 >
