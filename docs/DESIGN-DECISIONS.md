@@ -491,8 +491,48 @@ filter were each introduced in turn and each failed the suite.
 
 ---
 
+## 17. The read pool stays at 2 — but entry 15's reason for it has expired
+
+**Chosen:** `QUERY_POOL_SIZE` remains **2**.
+**Rejected:** widening it; giving the aggregate endpoint a connection pool of
+its own.
+**Why the old reason is void:** entry 15 justified the cut from 8 with a
+measurement of *eight concurrent unindexed reads returning all eight HTTP 500 at
+5.05 s*. Those reads were aggregates. Since entry 16 the aggregate is answered
+from memory, so that workload no longer exists and the number that justified the
+size no longer describes anything the service does. A value kept for a reason
+that has expired is a value nobody has actually chosen, which is why this is a
+new entry rather than an edit to 15.
+**Why the answer is nevertheless still 2:** the replacement reasoning points the
+same way, from different evidence. Under load PostgreSQL runs at **76% average
+and 102.6% peak** of its single CPU while the application uses well under a
+fifth of its own — the database is the pinned resource, and connections are
+demand on it, not capacity. Against that, the error-rate component is worth
+**15 points**, is currently at its maximum, and costs **5.36 points per 1%** of
+error rate given up. Adding backends to a saturated core to buy latency risks
+more than the latency is worth, and the latency bucket at stake is 5.42.
+**Rejected specifically — a dedicated aggregate pool.** It was the
+conservative-looking option and it is the riskier one. It *relocates* the
+aggregate's fringe query so it stops queueing behind `GET /logs`; it does not
+remove the query, which still executes on the same pinned CPU. Finer-grained
+counters delete the query outright. **When the constraint is one saturated core,
+removing work beats redistributing it** — and the removal carries no error-rate
+risk at all, while adding backends does.
+**Gives up:** read concurrency. Two connections is genuinely narrow, and if the
+read mix ever stops being dominated by cheap keyset reads this needs re-deriving
+against whatever replaces it — from a current measurement, not from entry 15's.
+**Verified by:** no automated guard; a compose-file setting with its reasoning
+inline. The failure drill and reliability checks cover the degradation path but
+not the sizing.
+**Evidence:** `docs/run6_results_improvement/`, entries 15 and 16.
+
+---
+
 ## CHANGES
 
+- 2026-08-20: entry 17 added (read pool retained at 2 on replacement
+  reasoning; entry 15's justifying measurement describes a workload that entry
+  16 deleted). Entries 15 and 16 stand as written.
 - 2026-08-20: entry 16 added (in-process aggregate counters). It changes
   the read path only; entry 15's write-path cost stands unaddressed.
 - 2026-08-20: entries 14 and 15 added (one-round-trip aggregate; read pool

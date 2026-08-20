@@ -465,6 +465,44 @@ that is already finished. If a task turns out to be partly done, say which part.
 >    risks reintroducing errors in order to buy latency is a losing trade** —
 >    which is the hard guardrail on widening the read pool.
 >
+> 6. **The 604 ms has a mechanism, and it is a tester-version difference —
+>    demonstrated, not inferred.** The aggregate window's `until` is built from
+>    fixed constants in the tester the local CLI ships, but an earlier version
+>    read the clock; the current source still carries the comment explaining why
+>    they stopped. The platform ran that earlier version — our own run 5 finding
+>    that the request ratio is exactly 3.0000 proves it, because the current
+>    tester issues aggregates from a separate low-rate scenario and cannot
+>    produce that ratio. Both window shapes were run through `computeEdgeSlices`
+>    and `secondHasRows`:
+>
+>    | window shape | statements per aggregate |
+>    | --- | ---: |
+>    | `until` fixed in the future (what the local CLI sends) | **0** |
+>    | `until` read from the clock (what the platform sent) | **1, on 10 of 10** |
+>
+>    Under a clock-derived `until` the right fringe lands in the **current**
+>    second, which at 14,285 logs/s is never empty — so every aggregate issues a
+>    fringe query. That is the 604 ms: not the query's cost, but its wait for one
+>    of two pool connections.
+> 7. **The aggregate runs at ~143 req/s on the platform, not 4/s.** At the
+>    verified 3.0000 ratio, 428 req/s total decomposes to ~143 POST/s and two GETs per
+>    iteration. So the fringe statements are ~143/s, and removing them takes the
+>    two-slot pool from roughly **286 to 143 queries/s** — it halves the queue
+>    `GET /logs` is waiting in, and queueing collapses non-linearly near
+>    saturation.
+> 8. **Value of that fix: 8.9 points certain, 4-5 conditional.** The aggregate
+>    bucket collapses either way, because the endpoint stops touching the pool at
+>    all. Whether `GET /logs` p95 follows it down is the open question, and it is
+>    the tell: if it does, the pool was shared and saturated; if only the
+>    aggregate moves, the remaining GET is expensive on its own and the latency
+>    bucket needs separate work. **Set both expectations before the run so the
+>    result cannot be read as a disappointment.**
+> 9. **A dedicated aggregate pool was considered and rejected.** It relocates the
+>    fringe query; finer counters delete it. With PostgreSQL pinned at 102.6%
+>    peak and the error component worth 15 points that we now hold in full at
+>    5.36 points per 1%, adding backends to a saturated core risks more than the
+>    latency it could buy. Removing work beats redistributing it.
+
 > **Where the remaining ~24 points are:**
 >
 > | bucket | now | ceiling | worth |
@@ -481,13 +519,44 @@ that is already finished. If a task turns out to be partly done, say which part.
 > now been made. The one-change-per-submission discipline is affordable again, so
 > prefer an attributable delta over a bundle.
 >
-> **Next, in order.** (a) Record run 6 — write-up and a DESIGN-DECISIONS entry.
-> (b) Settle why the drain probe fails on the platform when it succeeds locally:
-> replay the two probe URLs by hand against a loaded stack. It is the cheapest
-> experiment here and it decides whether the 6 eventual-consistency points are
-> near-free or need a ~20x page-rate rewrite. (c) Attack `/logs` read
-> throughput — it is the shared cause of items 1, 2 and 3 above — measuring one
-> change at a time, and never at the cost of the error rate.
+> **Next, in order.**
+>
+> **(a) Reproduce the fringe locally — free, no submission.** Drive
+> `scripts/mixed-workload.mjs` at 15,000 logs/s with its own aggregates disabled
+> (`AGGREGATE_INTERVAL_MS` high) so every aggregate statement is attributable,
+> and issue probes at the platform's **~143/s**, not the local tester's 4/s —
+> statements per request are rate-independent but queueing is not, and probing
+> at 4/s would report "mechanism confirmed, effect small" as an artifact of the
+> probe rate. **Interleave A,B,A,B,A,B at 30 s each** rather than running A then
+> B, so phase B is not measured against a larger table. Assert: phase B issues
+> **exactly 1** statement per request (2 means the left edge fired too, which is
+> misattribution, not a stronger result); no `aggregate_cache_disabled` event in
+> either phase; and `%a` in `log_line_prefix` so statements attribute by
+> `application_name` rather than by SQL text. Expect the local latency delta to
+> **understate** the platform — local PostgreSQL reaches 72-76%, not 102.6% — so
+> the statement count is the load-bearing output and the p95 is a bonus.
+>
+> **(b) Run 7 — millisecond fringe counters.** A **total-only** millisecond
+> layer over the last ~10 s, folded into the per-second map as slots age. A
+> *filtered* query with a live right fringe must **decline** to the existing SQL
+> fragment rather than answer from a total: every graded hot-path aggregate is
+> unfiltered and the drain probe's right fringe is already free, so total-only
+> serves every graded shape at ~10,000 numbers instead of a per-key map — but
+> silently summing a total under a filter is exactly the confidently-wrong
+> answer that design decision 16 names as this cache's whole risk. Compute the
+> entry bound from (a) rather than estimating it, and check it against
+> `MAX_CELLS`, which **disables** the cache rather than degrading it. The
+> ms->second rollup is a new off-by-one surface: add that boundary to the parity
+> gate and mutation-test it alongside the existing four, or the gate stops being
+> load-bearing exactly where the new risk is.
+>
+> **(c) Run 8 — drop `logs_attributes_gin_idx`.** See the corrected gate below.
+>
+> **Not targeted: the 6 eventual-consistency points.** They are a by-product of
+> database headroom, not a separate problem — the drain rate is the same
+> saturated-PostgreSQL story as everything else, and the best build on this
+> platform converts only 2 of 4 scenarios anyway. Bank the aggregate bucket
+> first.
 >
 > **Design decision 15 needs a follow-up entry, not an edit.** Its justification
 > for `QUERY_POOL_SIZE: 2` was "eight concurrent unindexed reads returned all
@@ -556,8 +625,23 @@ that is already finished. If a task turns out to be partly done, say which part.
 > attribute-filter latency without the index at graded row counts first.** Do not
 > bundle it into stage 1.
 >
+> **CORRECTION 2026-08-20: the premise above is false and the gate is lifted.**
+> It has been verified that **no graded query issues an attribute filter, in any
+> tester version** — evidence in the private analysis repo (SANITIZATION.md §7).
+> Nothing in the correctness catalog filters by attribute, so dropping the index
+> cannot cost correctness points. What it *does* cost is a real product
+> capability: `index-removal.md` measured a **42.7x** regression on a selective
+> attribute lookup without it. So record the drop as a deliberate trade with
+> `HOT_ATTRIBUTE_KEYS` as the replacement path for keys that matter — **not as a
+> free win.** It is now schedulable as run 8, on its own, after run 7.
+>
 > **Explicitly not adopting: `UNLOGGED` tables.** Declined on durability grounds;
 > nothing here changes that.
+>
+> **`MAX_LOG_AGE_DAYS` must stay 0.** Benchmark fixture rows are backdated far
+> beyond any plausible floor, so a non-zero value would reject them at ingest and
+> void the entire run before it starts. The default is 0 and the only safe change
+> is none.
 >
 > **Why a branch.** `e84b6de` is a known, reproducible 39.49 and is the control.
 > It stays on main and stays submittable, so a stage that loses points costs one
@@ -822,7 +906,7 @@ the "is it worth it" gate below, not a substitute for it.
 ## The measurement standard — what counts as evidence here
 
 Any A/B that informs a merge, a revert, or a claim in a results file must meet
-**all nine** of these. A run that misses one is a screen, not evidence: label it
+**all ten** of these. A run that misses one is a screen, not evidence: label it
 as such and do not put its number in a headline.
 
 1. **Interleaved.** Alternate the two builds — A, B, A, B, A, B. Never all of A
@@ -866,6 +950,22 @@ as such and do not put its number in a headline.
    ~0.0% on throughput A/Bs by construction — it cannot see a change that only
    shows up under a generator that pushes past us. The CLI is the regression
    gate; for anything touching the read path, the platform is the instrument.
+
+10. **The local benchmark CLI cannot see everything the platform measures, and
+    the aggregate is the proven case.** Rule 9 says to score every change with
+    the official CLI, and that stands — but it is a regression gate, not a
+    proxy. The CLI ships a tester whose aggregate window ends at a fixed instant
+    in the future; the platform ran an earlier one that read the clock. Under
+    the first, our aggregate issues **zero** statements and reports 34 ms
+    locally. Under the second it issues one fringe query per request and
+    reported **604 ms**. Same code, same throughput, on hardware eight times
+    slower. **A local aggregate latency is therefore not evidence about platform
+    aggregate latency**, and a local A/B on this change will show nothing at
+    all. Before trusting any local read-path number, check that the local probe
+    asks the same question the platform's does — this is a sharper form of
+    rule 8 than "the local database is idle", and it cost us a submission's worth
+    of misplaced confidence in run 6's local gate, which predicted "no change
+    within noise" ahead of a 33-point jump.
 
 **Measured noise, for calibration:** ~6% for a repeated build within a session,
 ~11% across sessions. Never compare against a number from an earlier session.
