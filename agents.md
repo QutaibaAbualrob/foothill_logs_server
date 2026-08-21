@@ -4,6 +4,12 @@ You are working on this repository — a log-ingestion service (PostgreSQL, Dock
 Compose) built to a published project brief. This file is the map for humans and
 AI agents alike.
 
+**Project phase, 2026-08-21: the optimization work is closed by owner decision
+and the result is accepted as final.** The current work is documentation, code
+quality, typing and presentation — see **Next** below. Every performance item
+still written in this file is marked **NEVER IMPLEMENTED** and is history, not a
+backlog.
+
 **What ships is Fastify on Bun 1.3.14** (merged 2026-08-18), and that is what a
 bare `docker compose up` gives you. The 2x2 that decided it — Express/Fastify by
 Node/Bun — is fully measured; the three losing cells survive as branches
@@ -398,6 +404,66 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
+> **THE OPTIMIZATION WORK IS CLOSED — owner decision, 2026-08-21.** The run 7
+> result is accepted as final. **No further performance fix or enhancement will
+> be implemented**, including every item this section had queued, gated, staged
+> or paused. Everything below this block is **NEVER IMPLEMENTED**.
+>
+> It is kept, not deleted, because it is the record of how the result was
+> reached: the measurements that produced it, the eight explanations that were
+> eliminated, and the several conclusions that later runs overturned. A backlog
+> nobody will action is worth little; a reasoning trail with its own corrections
+> in it is worth a great deal, and the two happen to live in the same
+> paragraphs.
+>
+> **Read it as history. Do not resume any of it.** If a future reader
+> believes an item deserves reviving, that is a new decision needing a new owner
+> instruction — never an inference from the fact that the item is still written
+> down here.
+
+> **CURRENT FOCUS — 2026-08-21: the repository itself.**
+>
+> The work now is documentation, code quality, type rigour and presentation. The
+> service is finished as an optimization target; what is unfinished is how well
+> it reads, how clearly it explains itself, and how it presents to someone
+> encountering it for the first time.
+>
+> **No task list is set deliberately.** The areas are:
+>
+> - **Documentation** — depth and coverage, for a reader who has only ever seen
+>   this repository. Much of what exists was written to record a measurement in
+>   the middle of a run, not to explain the system to a newcomer.
+> - **Code cleanliness** — naming, structure, dead paths, and comments that
+>   describe an access pattern rather than a benchmark. Several were written
+>   under time pressure between submissions.
+> - **Typing** — an extra pass for rigour. `npm run typecheck` is load-bearing:
+>   the Bun image has no build step, so it is the only gate between a type error
+>   and production.
+> - **Presentation** — how the repository reads end to end, and how the result
+>   and the reasoning behind it are shown.
+>
+> **What carries over unchanged.** These are not performance rules and none of
+> them lapse with the optimization work:
+>
+> - the **Standing rules** at the end of this file;
+> - the recording obligations in `docs/DESIGN-DECISIONS.md` — its four rules at
+>   the top still bind, and *append, never silently rewrite* applies to any
+>   cleanup that touches a recorded decision;
+> - the **measurement standard** below, for any claim that survives a rewrite —
+>   tidying prose must not quietly upgrade a hedged finding into a
+>   confident one;
+> - `plan/internal/SANITIZATION.md` §1-§3 and §2.1 before writing to or
+>   committing tracked files, and branch names included.
+>
+> **One trap specific to this phase.** Most of this file and most of
+> `docs/test_results/` describe work that was measured once and never revisited.
+> Cleaning it up means rewording claims, and a reworded claim is easy to
+> strengthen by accident. **Where a finding was recorded as uncertain,
+> falsified, or not-comparable, it must stay that way** — the corrections in
+> this file are among the most valuable things in it, and several of them
+> read as embarrassing. Keep them.
+
+
 > **THE READ PATH IS CLOSED — 2026-08-21, run 7, 88.98.** The branch line
 > `perf/read-path-and-rollup` -> `perf/fringe-free-aggregate` opened 2026-08-19
 > from `e84b6de` and is merged to `main` at `dee005f`. Errors, request latency,
@@ -643,16 +709,19 @@ that is already finished. If a task turns out to be partly done, say which part.
 > 6.00 + 5.00 + 0.02 = 11.02, and 88.98 + 11.02 = 100. **Nothing else is left**,
 > and both live buckets point away from the read path.
 
-> **Next, in order.**
+> **Next, in order.** **NEVER IMPLEMENTED — closed 2026-08-21.** Retained as the
+> last state of the plan, and as the record of what the run 7 evidence pointed
+> at.
 >
 > **(a) Settle the eventual-consistency probe — free, local, no submission.**
-> The largest single bucket on the board at **6.00 points**, and the experiment
-> costs nothing but time. Replicate `t1` byte-for-byte against our own stack at
-> platform scale — one service holding ~1.8M rows inside a 120 s window, which
-> the local CLI's fixture never produces — and record, for **both** the
-> `-consistency-probe` sentinel and the real service, the HTTP status, the exact
-> response body, and the summed bucket count. Probe with `bucket=1d`,
-> `since` = window start, `until` = now + 60 s, exactly as `i0` builds it.
+> **NEVER IMPLEMENTED — closed 2026-08-21.** The largest single bucket on the
+> board at **6.00 points**, and the experiment costs nothing but time. Replicate
+> `t1` byte-for-byte against our own stack at platform scale — one service
+> holding ~1.8M rows inside a 120 s window, which the local CLI's fixture never
+> produces — and record, for **both** the `-consistency-probe` sentinel and the
+> real service, the HTTP status, the exact response body, and the summed bucket
+> count. Probe with `bucket=1d`, `since` = window start, `until` = now + 60 s,
+> exactly as `i0` builds it.
 >
 > Four outcomes, each naming a different next action:
 >
@@ -666,7 +735,8 @@ that is already finished. If a task turns out to be partly done, say which part.
 > **Run this before building anything.** Three of the four outcomes lead
 > somewhere different, and the fourth saves a submission.
 >
-> **(b) Run 8 — the write pipeline, for the 5-point sustained bonus.** Fact 5
+> **(b) Run 8 — the write pipeline, for the 5-point sustained bonus.** **NEVER
+> IMPLEMENTED — closed 2026-08-21.** Fact 5
 > puts the stress collapse in the flush path with both CPUs idle. Two levers
 > were parked on a saturated database that no longer exists:
 >
@@ -686,23 +756,28 @@ that is already finished. If a task turns out to be partly done, say which part.
 > Ship **one** of these per submission. The one-change-per-submission discipline
 > is affordable and run 7 shows exactly what a clean attribution is worth.
 >
-> **(c) Run 9 — drop `logs_attributes_gin_idx`.** See the corrected gate below.
-> Lowest priority of the three: it is a capability trade rather than a free win,
-> and it targets a write-path cost that (b) addresses more directly.
+> **(c) Run 9 — drop `logs_attributes_gin_idx`.** **NEVER IMPLEMENTED — closed
+> 2026-08-21.** See the corrected gate below. Lowest priority of the three: it
+> is a capability trade rather than a free win, and it targets a write-path cost
+> that (b) addresses more directly.
 >
 > **Design decision 15's follow-up is complete.** Entry 17 replaced its expired
 > reasoning; **entry 19 supplies the measurement entry 17 said it lacked**, from
 > run 7. The pool stays at 2 and the question is closed — reopen it only with a
 > read mix that is not dominated by cheap keyset reads.
 >
-> **Migration 004 has met its own re-measure condition.** It did *not* assume
-> the workload never filters by service — it measured a service-filtered cursor
-> walk at 12.6-13.1 pages/s before against 12.4-14.4 after. What it conditioned
-> on was table size: "if a future workload pages heavily by service or level
-> under a much larger table, re-measure". The drain filters by service on every
-> page, over 1.7-2.0M live rows. That condition is now met.
+> **Migration 004 has met its own re-measure condition.** **NEVER IMPLEMENTED —
+> closed 2026-08-21.** The condition was met and the re-measurement was never
+> taken. It did *not* assume the workload never filters by service — it measured
+> a service-filtered cursor walk at 12.6-13.1 pages/s before against 12.4-14.4
+> after. What it conditioned on was table size: "if a future workload pages
+> heavily by service or level under a much larger table, re-measure". The drain
+> filters by service on every page, over 1.7-2.0M live rows. That condition is
+> now met.
 
-> **Staged, one submission per stage, so a delta can be attributed.**
+> **Staged, one submission per stage, so a delta can be attributed.** Stages 1
+> and 2 shipped as runs 5 and 6; **everything still open in this plan is NEVER
+> IMPLEMENTED — closed 2026-08-21.**
 >
 > **Stage 1 — two config lines, no code.**
 >
@@ -735,15 +810,16 @@ that is already finished. If a task turns out to be partly done, say which part.
 > retained window. This removes a hot-key upsert from every flush transaction and
 > takes the aggregate off the database entirely for the covered window.~~
 
-> **Stage 3 is therefore still blocked.** It was gated on Stage 2 removing the
-> rollup upsert. That did not happen, so raising flush concurrency would
-> introduce exactly the hot-key contention on `logs_agg_1m` the single-flight
-> batcher is protecting against.
+> **Stage 3 is therefore still blocked.** **NEVER IMPLEMENTED — closed
+> 2026-08-21.** It was gated on Stage 2 removing the rollup upsert. That did not
+> happen, so raising flush concurrency would introduce exactly the hot-key
+> contention on `logs_agg_1m` the single-flight batcher is protecting against.
 >
-> **Stage 3 — only after stage 2 lands.** Raise flush concurrency 1 → 2;
-> `WRITE_POOL_SIZE` is already 2 and currently unused. **Order matters:** doing
-> this before stage 2 introduces exactly the hot-key contention on `logs_agg_1m`
-> that the single-flight batcher is currently protecting us from.
+> **Stage 3 — only after stage 2 lands.** **NEVER IMPLEMENTED — closed
+> 2026-08-21.** Raise flush concurrency 1 → 2; `WRITE_POOL_SIZE` is already 2
+> and currently unused. **Order matters:** doing this before stage 2 introduces
+> exactly the hot-key contention on `logs_agg_1m` that the single-flight batcher
+> is currently protecting us from.
 >
 > **Deferred with a gate, not scheduled: dropping `logs_attributes_gin_idx`.**
 > `docs/test_results/postgres-profile.md` records it at 57 MB, maintained on
@@ -764,7 +840,8 @@ that is already finished. If a task turns out to be partly done, say which part.
 > capability: `index-removal.md` measured a **42.7x** regression on a selective
 > attribute lookup without it. So record the drop as a deliberate trade with
 > `HOT_ATTRIBUTE_KEYS` as the replacement path for keys that matter — **not as a
-> free win.** It is now schedulable as run 8, on its own, after run 7.
+> free win.** It was schedulable as run 8, on its own, after run 7. **NEVER
+> IMPLEMENTED — closed 2026-08-21. The index ships.**
 >
 > **Explicitly not adopting: `UNLOGGED` tables.** Declined on durability grounds;
 > nothing here changes that.
@@ -792,7 +869,9 @@ that is already finished. If a task turns out to be partly done, say which part.
 > Stage 2: aggregate p95 under ~400 ms, **Queries > 11**, and the throughput
 > component moving off 4.49.
 
-> **ON HOLD (2026-08-19) — branch `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.**
+> **NEVER IMPLEMENTED — closed 2026-08-21. Was ON HOLD (2026-08-19) — branch
+> `perf/db-write-cost`, opened 2026-08-18 from `881bd25`.** Nothing remaining in
+> this block was built; the items already marked DONE below did ship.
 >
 > Paused in favour of the platform-gap work above. Phase 1 moved the score by
 > **+0.19 points** (39.30 → 39.49) in total, which is why it is not the priority.
@@ -821,18 +900,18 @@ that is already finished. If a task turns out to be partly done, say which part.
 > shipped compose file; `max_wal_size` stays at 2 GB with the measurement
 > recorded inline so nobody re-proposes it.
 >
-> **Remaining in phase 1: item 3 (binary `COPY`) only**, and it is the largest
-> piece of work — `pg-copy-streams` has no binary mode, so the wire framing is
-> code we own. It attacks the server-side CSV parse inside the statement that
-> owns 71.3% of database time, and is the last item that reduces per-row
-> database cost without giving anything up. Item 2 remains blocked on the
-> harness emitting no mid-selectivity attribute key.
+> **Remaining in phase 1: item 3 (binary `COPY`) only** — **NEVER IMPLEMENTED —
+> closed 2026-08-21.** It is the largest piece of work — `pg-copy-streams` has
+> no binary mode, so the wire framing is code we own. It attacks the server-side
+> CSV parse inside the statement that owns 71.3% of database time, and is the
+> last item that reduces per-row database cost without giving anything up. Item
+> 2 remains blocked on the harness emitting no mid-selectivity attribute key.
 >
-> **Phase 2 (items 6–9): measurement gaps, not tuning.** Explicitly **not
-> scheduled** until phase 1 reports: background-writer tuning (direction
-> unknown — see the plan), a per-request read-after-write probe, ordering and
-> duplicate assertions on the walk *under ingest*, and a closed-loop mode for
-> the harness.
+> **Phase 2 (items 6–9): measurement gaps, not tuning.** **NEVER IMPLEMENTED —
+> closed 2026-08-21.** Explicitly **not scheduled** until phase 1 reports:
+> background-writer tuning (direction unknown — see the plan), a per-request
+> read-after-write probe, ordering and duplicate assertions on the walk *under
+> ingest*, and a closed-loop mode for the harness.
 >
 > **Two standing rules for this work.** One variable per run. And any index
 > change reports its **read cost as well as its write gain** — a write gain
@@ -911,6 +990,10 @@ postgres, and there is commonly an unrelated postgres on the host's 5432. Point
 tests fail with `password authentication failed` against a foreign database and
 look like real breakage. Without `TEST_DATABASE_URL` they self-skip, which is why
 a green `npm test` alone does not mean the integration files ran.
+
+**The six numbered items that follow are NEVER IMPLEMENTED — closed
+2026-08-21.** They are open measurement gaps on the Fastify + Bun stack, kept
+because they say precisely which numbers in this file are *not* current.
 
 **Two adoption checks are already clear — do not spend a session repeating
 them.**
