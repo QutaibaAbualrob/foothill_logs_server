@@ -394,7 +394,16 @@ test("aggregate cache: a live sub-second fringe is answered without SQL", async 
     // Anchored on a real second boundary so the window's geometry is fixed
     // rather than a function of Date.now() % 1000, and one row on every
     // millisecond so any chosen bound has a row sitting exactly on it.
-    const anchor = Math.ceil((t0 + 200) / SECOND_MS) * SECOND_MS;
+    //
+    // The lower fringe below reaches BACK from the anchor by FRINGE_BACK_MS,
+    // and rows cannot start any earlier than `t0`: the millisecond layer only
+    // retains what it saw after hydration, so backdating the fixture would put
+    // the row outside the layer rather than inside it. The anchor therefore has
+    // to sit at least that far above `t0`, which is what the `+ FRINGE_BACK_MS`
+    // guarantees — `anchor >= t0 + FRINGE_BACK_MS`, hence
+    // `anchor - FRINGE_BACK_MS >= t0`, for every possible `Date.now() % 1000`.
+    const FRINGE_BACK_MS = 300;
+    const anchor = Math.ceil((t0 + FRINGE_BACK_MS) / SECOND_MS) * SECOND_MS;
     const recent: NormalizedLog[] = [];
     for (let offset = 0; offset <= anchor - t0 + 1_400; offset += 1) {
       for (let repeat = 0; repeat < 2; repeat += 1) {
@@ -456,7 +465,7 @@ test("aggregate cache: a live sub-second fringe is answered without SQL", async 
     // Both fringes live: `since` also lands mid-second inside the data, and on
     // a row, which must be INCLUDED (`timestamp >= since`). The two halves of a
     // half-open range fail in opposite directions, so both need a row on them.
-    const bothSinceMs = anchor - 300;
+    const bothSinceMs = anchor - FRINGE_BACK_MS;
     assert.ok(
       recent.some((entry) => Date.parse(entry.timestamp) === bothSinceMs),
       "the fixture must place rows exactly on the lower bound too",
