@@ -1,0 +1,292 @@
+==========================================================================
+ENVIRONMENT
+==========================================================================
+  OS                 : Ubuntu 24.04.4 LTS
+  CPUs               : 16  (required 5.5, sufficient=True)
+  Memory             : 31.2 GiB  (required 2.25 GiB, sufficient=True)
+  Generator          : grafana/k6:0.54.0 in Docker on lgbench-07154f18b5_default (cpus 4, 1g)  isolated=True
+  Resource limits    : enforced=True
+  Score version      : 2026-08-18.v10
+  run1 generatedAt    : 2026-08-21T18:50:02.199Z
+  run2 generatedAt    : 2026-08-21T19:05:26.234Z
+  run3 generatedAt    : 2026-08-21T19:20:29.578Z
+
+==========================================================================
+SCORE                                 run1            run2            run3
+==========================================================================
+machine speed (factor)              0.1352          0.1202          0.1220
+  workUnits/sec                      7.029           6.250           6.345
+--------------------------------------------------------------------------
+TOTAL SCORE /100                     96.11           94.88           96.04
+  Correctness /15                       15              15              15
+  Performance /50                    46.47           45.80           46.49
+  Queries /15                        14.64           14.08           14.55
+  Reliability /20                       20              20              20
+  applied cap                            -               -               -
+  eligible                             yes             yes             yes
+--------------------------------------------------------------------------
+component detail
+  perf.throughput                   0.4000          0.4000          0.4000
+  perf.errors                       0.3000          0.3000          0.3000
+  perf.latency                      0.1795          0.1660          0.1798
+  perf.sustainedBonus               0.0500          0.0500          0.0500
+  q.aggregateLatency                0.9599          0.8980          0.9497
+  q.eventualConsist pts                  6               6               6
+  q.readAfterWrite                  0.2459          0.1528          0.1638
+  rel.scenarioCompletion                 1               1               1
+  rel.crashFree                          1               1               1
+
+==========================================================================
+CORRECTNESS (the only category that transfers to the grade)
+==========================================================================
+passed / total                       15/15           15/15           15/15
+  all checks passed in every run
+
+==========================================================================
+SCENARIOS
+==========================================================================
+
+-- scenario: load -------------------------------------------------------
+                                      run1            run2            run3
+  status                         completed       completed       completed
+  logsPerSecond                   14,999.2        14,999.2        14,999.2
+  offeredLogsPerSecond               15000           15000           15000
+  errorRate                              0               0               0
+  latencyP95Ms                       192.5           253.0           190.9
+  aggregateP95Ms                      20.0              51            25.1
+  readAfterWriteSuccessRate          0.2459          0.1528          0.1638
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  1799900         1799900         1799900
+  visibleRecords                   1799900         1799900         1799900
+  droppedIterations                      0               0               0
+  generatorLimited                      NO              NO              NO
+  serviceLimited                        NO              NO              NO
+
+-- scenario: stress -----------------------------------------------------
+                                      run1            run2            run3
+  status                         completed       completed       completed
+  logsPerSecond                      20718        20,786.7           20924
+  offeredLogsPerSecond               21000           21000           21000
+  errorRate                              0               0               0
+  latencyP95Ms                       650.8           630.5           422.1
+  aggregateP95Ms                      37.0              63              42
+  readAfterWriteSuccessRate          0.1156          0.1105          0.0749
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  3107700         3118000         3138600
+  visibleRecords                   3107700         3118000         3138600
+  droppedIterations                    422             319             113
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+-- scenario: spike ------------------------------------------------------
+                                      run1            run2            run3
+  status                         completed       completed       completed
+  logsPerSecond                      15258           15124           15326
+  offeredLogsPerSecond               15375           15375           15375
+  errorRate                              0               0               0
+  latencyP95Ms                       307.2           733.4           242.2
+  aggregateP95Ms                        25              40              32
+  readAfterWriteSuccessRate          0.2657          0.3045          0.3429
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  1525800         1512400         1532600
+  visibleRecords                   1525800         1512400         1532600
+  droppedIterations                    116             250              48
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+-- scenario: breakpoint -------------------------------------------------
+                                      run1            run2            run3
+  status                         completed       completed       completed
+  logsPerSecond                   22,910.8           22105        23,090.8
+  offeredLogsPerSecond               24375           24375           24375
+  errorRate                        0.04319         0.07397         0.03406
+  latencyP95Ms                     1,634.2         1,772.7         1,552.6
+  aggregateP95Ms                      77.1             106              80
+  readAfterWriteSuccessRate          0.0886          0.0784          0.1018
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  2749300         2652600         2770900
+  visibleRecords                   2749300         2652600         2770900
+  droppedIterations                    514             605             562
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+==========================================================================
+VARIANCE ACROSS RUNS  (spread = max-min; %spread relative to mean)
+==========================================================================
+TOTAL SCORE                    min=      94.880 max=      96.111 mean=      95.676 sd=     0.690 spread=      1.230 (  1.3%)
+Correctness pts                min=      15.000 max=      15.000 mean=      15.000 sd=     0.000 spread=      0.000 (  0.0%)
+Performance pts                min=      45.798 max=      46.489 mean=      46.253 sd=     0.394 spread=      0.690 (  1.5%)
+Queries pts                    min=      14.082 max=      14.639 mean=      14.423 sd=     0.299 spread=      0.557 (  3.9%)  <-- LARGE
+Reliability pts                min=      20.000 max=      20.000 mean=      20.000 sd=     0.000 spread=      0.000 (  0.0%)
+machine speed factor           min=       0.120 max=       0.135 mean=       0.126 sd=     0.008 spread=      0.015 ( 11.9%)  <-- LARGE
+load.logsPerSecond             min=  14,999.167 max=  14,999.167 mean=  14,999.167 sd=     0.000 spread=      0.000 (  0.0%)
+load.latencyP95Ms              min=     190.931 max=     253.050 mean=     212.147 sd=    35.431 spread=     62.119 ( 29.3%)  <-- LARGE
+load.aggregateP95Ms            min=      20.050 max=      51.000 mean=      32.067 sd=    16.594 spread=     30.950 ( 96.5%)  <-- LARGE
+load.errorRate                 min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+load.readAfterWriteSuccessRate min=       0.153 max=       0.246 mean=       0.187 sd=     0.051 spread=      0.093 ( 49.7%)  <-- LARGE
+stress.logsPerSecond           min=  20,718.000 max=  20,924.000 mean=  20,809.556 sd=   104.890 spread=    206.000 (  1.0%)
+stress.latencyP95Ms            min=     422.145 max=     650.774 mean=     567.814 sd=   126.559 spread=    228.629 ( 40.3%)  <-- LARGE
+stress.aggregateP95Ms          min=      37.050 max=      63.000 mean=      47.350 sd=    13.777 spread=     25.950 ( 54.8%)  <-- LARGE
+stress.errorRate               min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+stress.readAfterWriteSuccessRate min=       0.075 max=       0.116 mean=       0.100 sd=     0.022 spread=      0.041 ( 40.5%)  <-- LARGE
+spike.logsPerSecond            min=  15,124.000 max=  15,326.000 mean=  15,236.000 sd=   102.781 spread=    202.000 (  1.3%)
+spike.latencyP95Ms             min=     242.189 max=     733.374 mean=     427.584 sd=   266.808 spread=    491.184 (114.9%)  <-- LARGE
+spike.aggregateP95Ms           min=      25.000 max=      40.000 mean=      32.333 sd=     7.506 spread=     15.000 ( 46.4%)  <-- LARGE
+spike.errorRate                min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+spike.readAfterWriteSuccessRate min=       0.266 max=       0.343 mean=       0.304 sd=     0.039 spread=      0.077 ( 25.3%)  <-- LARGE
+breakpoint.logsPerSecond       min=  22,105.000 max=  23,090.833 mean=  22,702.222 sd=   524.982 spread=    985.833 (  4.3%)
+breakpoint.latencyP95Ms        min=   1,552.586 max=   1,772.690 mean=   1,653.170 sd=   111.267 spread=    220.104 ( 13.3%)  <-- LARGE
+breakpoint.aggregateP95Ms      min=      77.100 max=     106.000 mean=      87.700 sd=    15.914 spread=     28.900 ( 33.0%)  <-- LARGE
+breakpoint.errorRate           min=       0.034 max=       0.074 mean=       0.050 sd=     0.021 spread=      0.040 ( 79.2%)  <-- LARGE
+breakpoint.readAfterWriteSuccessRate min=       0.078 max=       0.102 mean=       0.090 sd=     0.012 spread=      0.023 ( 26.1%)  <-- LARGE
+
+
+==========================================================================
+ENVIRONMENT
+==========================================================================
+  OS                 : Ubuntu 24.04.4 LTS
+  CPUs               : 16  (required 7.5, sufficient=True)
+  Memory             : 31.2 GiB  (required 2.25 GiB, sufficient=True)
+  Generator          : grafana/k6:0.54.0 in Docker on lgbench-07154f18b5_default (cpus 6, 1g)  isolated=True
+  Resource limits    : enforced=True
+  Score version      : 2026-08-18.v10
+  g6run1 generatedAt    : 2026-08-21T19:36:27.311Z
+  g6run2 generatedAt    : 2026-08-21T19:51:52.327Z
+  g6run3 generatedAt    : 2026-08-21T20:07:23.059Z
+
+==========================================================================
+SCORE                               g6run1          g6run2          g6run3
+==========================================================================
+machine speed (factor)              0.1248          0.1233          0.1184
+  workUnits/sec                      6.491           6.412           6.158
+--------------------------------------------------------------------------
+TOTAL SCORE /100                     94.93           94.67           94.73
+  Correctness /15                       15              15              15
+  Performance /50                    45.59           45.64           45.89
+  Queries /15                        14.33           14.03           13.85
+  Reliability /20                       20              20              20
+  applied cap                            -               -               -
+  eligible                             yes             yes             yes
+--------------------------------------------------------------------------
+component detail
+  perf.throughput                   0.4000          0.4000          0.4000
+  perf.errors                       0.3000          0.3000          0.3000
+  perf.latency                      0.1619          0.1629          0.1677
+  perf.sustainedBonus               0.0500          0.0500          0.0500
+  q.aggregateLatency                0.9260          0.8920          0.8719
+  q.eventualConsist pts                  6               6               6
+  q.readAfterWrite                  0.1658          0.1821          0.2047
+  rel.scenarioCompletion                 1               1               1
+  rel.crashFree                          1               1               1
+
+==========================================================================
+CORRECTNESS (the only category that transfers to the grade)
+==========================================================================
+passed / total                       15/15           15/15           15/15
+  all checks passed in every run
+
+==========================================================================
+SCENARIOS
+==========================================================================
+
+-- scenario: load -------------------------------------------------------
+                                    g6run1          g6run2          g6run3
+  status                         completed       completed       completed
+  logsPerSecond                   14,999.2        14,999.2        14,999.2
+  offeredLogsPerSecond               15000           15000           15000
+  errorRate                              0               0               0
+  latencyP95Ms                       271.6           267.0           245.2
+  aggregateP95Ms                        37              54            64.0
+  readAfterWriteSuccessRate          0.1658          0.1821          0.2047
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  1799900         1799900         1799900
+  visibleRecords                   1799900         1799900         1799900
+  droppedIterations                      0               0               0
+  generatorLimited                      NO              NO              NO
+  serviceLimited                        NO              NO              NO
+
+-- scenario: stress -----------------------------------------------------
+                                    g6run1          g6run2          g6run3
+  status                         completed       completed       completed
+  logsPerSecond                   20,739.3        20,549.3        20,729.3
+  offeredLogsPerSecond               21000           21000           21000
+  errorRate                              0               0               0
+  latencyP95Ms                       778.2           979.3           570.6
+  aggregateP95Ms                      50.0              53              43
+  readAfterWriteSuccessRate          0.1242          0.0725          0.1358
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  3110900         3082400         3109400
+  visibleRecords                   3110900         3082400         3109400
+  droppedIterations                    390             675             402
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+-- scenario: spike ------------------------------------------------------
+                                    g6run1          g6run2          g6run3
+  status                         completed       completed       completed
+  logsPerSecond                      15331           15232           15209
+  offeredLogsPerSecond               15375           15375           15375
+  errorRate                              0               0               0
+  latencyP95Ms                       255.9           314.3           293.8
+  aggregateP95Ms                        23              44              26
+  readAfterWriteSuccessRate          0.2798          0.2710          0.2962
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  1533100         1523200         1520900
+  visibleRecords                   1533100         1523200         1520900
+  droppedIterations                     43             142             165
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+-- scenario: breakpoint -------------------------------------------------
+                                    g6run1          g6run2          g6run3
+  status                         completed       completed       completed
+  logsPerSecond                      22635        22,608.3        22,658.3
+  offeredLogsPerSecond               24375           24375           24375
+  errorRate                        0.05540         0.05183         0.05410
+  latencyP95Ms                     1,740.1         1,867.5         1,721.7
+  aggregateP95Ms                        98              68            85.1
+  readAfterWriteSuccessRate          0.0854          0.0752          0.0938
+  thresholdPassed                      yes             yes             yes
+  consistencyPassed                    yes             yes             yes
+  acceptedRecords                  2716200         2713000         2719000
+  visibleRecords                   2716200         2713000         2719000
+  droppedIterations                    493             636             504
+  generatorLimited                     yes             yes             yes
+  serviceLimited                        NO              NO              NO
+
+==========================================================================
+VARIANCE ACROSS RUNS  (spread = max-min; %spread relative to mean)
+==========================================================================
+TOTAL SCORE                    min=      94.671 max=      94.927 mean=      94.777 sd=     0.133 spread=      0.256 (  0.3%)
+Correctness pts                min=      15.000 max=      15.000 mean=      15.000 sd=     0.000 spread=      0.000 (  0.0%)
+Performance pts                min=      45.593 max=      45.886 mean=      45.707 sd=     0.157 spread=      0.293 (  0.6%)
+Queries pts                    min=      13.847 max=      14.334 mean=      14.070 sd=     0.246 spread=      0.487 (  3.5%)  <-- LARGE
+Reliability pts                min=      20.000 max=      20.000 mean=      20.000 sd=     0.000 spread=      0.000 (  0.0%)
+machine speed factor           min=       0.118 max=       0.125 mean=       0.122 sd=     0.003 spread=      0.006 (  5.2%)  <-- LARGE
+load.logsPerSecond             min=  14,999.167 max=  14,999.167 mean=  14,999.167 sd=     0.000 spread=      0.000 (  0.0%)
+load.latencyP95Ms              min=     245.183 max=     271.567 mean=     261.259 sd=    14.107 spread=     26.384 ( 10.1%)  <-- LARGE
+load.aggregateP95Ms            min=      37.000 max=      64.050 mean=      51.683 sd=    13.673 spread=     27.050 ( 52.3%)  <-- LARGE
+load.errorRate                 min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+load.readAfterWriteSuccessRate min=       0.166 max=       0.205 mean=       0.184 sd=     0.020 spread=      0.039 ( 21.2%)  <-- LARGE
+stress.logsPerSecond           min=  20,549.333 max=  20,739.333 mean=  20,672.667 sd=   106.927 spread=    190.000 (  0.9%)
+stress.latencyP95Ms            min=     570.622 max=     979.332 mean=     776.046 sd=   204.363 spread=    408.710 ( 52.7%)  <-- LARGE
+stress.aggregateP95Ms          min=      43.000 max=      53.000 mean=      48.683 sd=     5.138 spread=     10.000 ( 20.5%)  <-- LARGE
+stress.errorRate               min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+stress.readAfterWriteSuccessRate min=       0.072 max=       0.136 mean=       0.111 sd=     0.034 spread=      0.063 ( 57.2%)  <-- LARGE
+spike.logsPerSecond            min=  15,209.000 max=  15,331.000 mean=  15,257.333 sd=    64.825 spread=    122.000 (  0.8%)
+spike.latencyP95Ms             min=     255.865 max=     314.310 mean=     287.986 sd=    29.650 spread=     58.444 ( 20.3%)  <-- LARGE
+spike.aggregateP95Ms           min=      23.000 max=      44.000 mean=      31.000 sd=    11.358 spread=     21.000 ( 67.7%)  <-- LARGE
+spike.errorRate                min=       0.000 max=       0.000 mean=       0.000 sd=     0.000 spread=      0.000 (  0.0%)
+spike.readAfterWriteSuccessRate min=       0.271 max=       0.296 mean=       0.282 sd=     0.013 spread=      0.025 (  8.9%)
+breakpoint.logsPerSecond       min=  22,608.333 max=  22,658.333 mean=  22,633.889 sd=    25.019 spread=     50.000 (  0.2%)
+breakpoint.latencyP95Ms        min=   1,721.699 max=   1,867.471 mean=   1,776.430 sd=    79.380 spread=    145.772 (  8.2%)
+breakpoint.aggregateP95Ms      min=      68.000 max=      98.000 mean=      83.717 sd=    15.051 spread=     30.000 ( 35.8%)  <-- LARGE
+breakpoint.errorRate           min=       0.052 max=       0.055 mean=       0.054 sd=     0.002 spread=      0.004 (  6.6%)
+breakpoint.readAfterWriteSuccessRate min=       0.075 max=       0.094 mean=       0.085 sd=     0.009 spread=      0.019 ( 22.0%)  <-- LARGE

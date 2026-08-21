@@ -32,6 +32,7 @@ Windows and say so.
 | `plan/internal/SANITIZATION.md` | **Pre-push review. Read it before every commit/push.** Gitignored — never tracked. |
 | `search_rnd/RND.md` | The R&D record: research decisions and design rules. |
 | `bench/` | Raw benchmark outputs (`raw/` is gitignored) and measured results. |
+| `bench-runs/` | The 2026-08-21 six-run official-CLI session: six JSON reports, the extractor (`summarize.py`), the drivers, the per-run timings and exit codes (`run-timings.txt`, `run-timings-gen6.txt`), and the write-ups (`BENCHMARK-RESULTS.md`, `full-metrics.txt`). The `*.log` console output inside is gitignored by the global `*.log` rule, so it is local-only — every number it carried is preserved in the two write-ups. |
 
 **Where the deep analysis lives:** the detailed score analysis, cross-repo
 comparisons, and all third-party material are kept in a **separate private
@@ -70,6 +71,41 @@ its own — an agent that reads only this file must not be sent to re-measure wo
 that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
+
+- [x] **Official CLI, six runs on Linux — correctness holds at 15/15, and the
+  generator is the constraint** — 2026-08-21, seed `6122026`, `--full --runner
+  docker`. Three runs at the documented `--generator-cpus 4` scored **96.111 /
+  94.880 / 96.036** (mean **95.676**, spread **1.230**); three more at
+  `--generator-cpus 6` scored **94.927 / 94.671 / 94.733** (mean **94.777**).
+  **Correctness 15/15 and Reliability 20/20 in all six**, no cap applied,
+  `eligible: true`. Two of the three baseline runs sit **above the 94.933-95.787
+  band** every earlier run held, at machine speeds **0.1202-0.1352** against the
+  earlier 0.1190-0.1209 — this is a different session on a faster-measuring
+  engine, so by the measurement standard's own rule the latency columns are
+  **not comparable** to the earlier set and the band should be **re-derived, not
+  extended**. **The generator, not the service, was the constraint**:
+  `generatorLimited: true` / `serviceLimited: false` on stress, spike and
+  breakpoint in **every one of the six runs**, so Performance (45.593-46.489)
+  and Queries (13.847-14.639) are **floors, not ceilings**. Raising
+  `--generator-cpus` from 4 to 6 **did not clear the warning** and bought
+  nothing — the two sets' ranges overlap (94.927 against a 94.880 baseline
+  minimum) while the mean fell 0.9 — because k6's iteration startup is bound by
+  single-core speed, not core count, on this Xeon E5-2667 v4 (8C/16T, 2016
+  Broadwell-EP). **Keep the flag at 4.** Ingest throughput is deterministic:
+  `load` returned **14,999.167 logs/s to the decimal in all three baseline
+  runs** against 15,000 offered, at **0.00% errors**. The tails swing far wider
+  than the score does — spike p95 **242-733 ms** (115% spread), load aggregate
+  p95 **20-51 ms** (97%), breakpoint error rate **0.034-0.074%** (79%) — so a
+  stable total here is hiding churn, not proving its absence. Run 2 is the
+  outlier on nearly every metric at once and the speed probe does not explain
+  it: run 3 measured the same 0.122 factor and scored **1.16 higher**. **Not a
+  clean room** — a browser and a desktop application ran throughout, which is
+  the most likely source of run 2's wobble and of the generator shortfall.
+  Evidence: `bench-runs/BENCHMARK-RESULTS.md`, the per-scenario dump
+  `bench-runs/full-metrics.txt`, six JSON reports
+  `bench-runs/{run,g6run}{1,2,3}.json`, and the extractor
+  `bench-runs/summarize.py` (`python3 bench-runs/summarize.py "run*.json"`).
+
 
 - [x] **Run 7: the millisecond edge layer on the platform** — 2026-08-21,
   `dee005f`. **88.98, up from 73.63.** Correctness **15/15** (75 of 75 checks)
