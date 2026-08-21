@@ -590,8 +590,46 @@ earlier version of the gate and drove the two extra cases above.
 
 ---
 
+## 19. The read pool stays at 2 — with the measurement entry 17 said it lacked
+
+**Chosen:** `QUERY_POOL_SIZE` remains **2**. The question entry 15 opened and
+entry 17 reopened is now **closed**.
+**Rejected:** widening the pool on the grounds that PostgreSQL now has headroom.
+**The measurement.** Entry 17 recorded its own evidence gap explicitly — it kept
+the value on replacement reasoning and noted that the sizing itself was
+unguarded and unmeasured. Run 7 supplies the measurement. On the load scenario,
+two connections carry the full graded read mix at **request p95 8.18 ms**,
+**aggregate p95 1.00 ms**, **error rate 0.00%**, and throughput at the offered
+ceiling, while PostgreSQL sits at **21.50% average and 33.41% peak** of its
+single CPU and the application at 18.92% of its half. Two connections are not
+the constraint on anything.
+**But the reason to keep 2 has inverted, which is why this is a new entry.**
+Entry 17 kept the pool narrow *because* the database was saturated at 76%
+average and connections were demand on a pinned core. Run 7 shows that
+saturation is gone, so that argument no longer applies and a reader would be
+right to expect the value to change. It does not, for a simpler reason:
+**there is nothing left to buy.** Errors, request latency, aggregate latency and
+load throughput are each at or within 1% of their maximum. A wider pool can only
+move numbers that are already maxed — while the error component is worth 15
+points, is held in full, and costs **5.36 points per 1%** given up. A change with
+no upside and a 15-point downside is not a trade, whatever the CPU headroom.
+**Gives up:** read concurrency, and now knowingly rather than by necessity. If
+the read mix ever stops being dominated by cheap keyset reads and one aggregate
+that never reaches the database, this needs re-deriving against whatever
+replaces it — from a measurement of that mix, not from this one.
+**Verified by:** no automated guard. It is a compose-file setting with its
+reasoning inline; the failure drill and reliability checks cover the degradation
+path but not the sizing.
+**Evidence:** [`run7-platform.md`](test_results/run7-platform.md), entries 15,
+16 and 17.
+
+---
+
 ## CHANGES
 
+- 2026-08-21: entry 19 added (the read pool stays at 2, now with the run 7
+  measurement entry 17 recorded as missing; the justification inverts while the
+  value does not). Entries 15, 16 and 17 stand as written.
 - 2026-08-20: entry 18 added (millisecond edge layer; the inverted-interior
   guard relaxed from `<=` to `<`). Entries 16 and 17 stand as written.
 - 2026-08-20: entry 17 added (read pool retained at 2 on replacement

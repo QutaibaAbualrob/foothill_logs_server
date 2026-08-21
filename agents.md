@@ -65,7 +65,27 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
-- [x] **The millisecond edge layer — built and gated, awaiting run 7** —
+- [x] **Run 7: the millisecond edge layer on the platform** — 2026-08-21,
+  `dee005f`. **88.98, up from 73.63.** Correctness **15/15** (75 of 75 checks)
+  and Reliability **20/20** held for a third run. Queries 0.00 -> **8.98** as
+  aggregate p95 collapsed **604 ms -> 1.00 ms**, and Performance 38.63 ->
+  **45.00** as request p95 fell **588 -> 8.18 ms** and load throughput reached
+  the offered ceiling at 14,999.17 logs/s with the error rate still **0.00%**.
+  PostgreSQL CPU **76.17% -> 21.50% average** — the database stopped being the
+  pinned resource. **Run 6's conditional forecast resolved YES**: `GET /logs`
+  latency followed the aggregate down, confirming that the two-slot pool was
+  shared and saturated and that ~143 aggregate statements per second were
+  queueing in front of every other reader. Every forecast for work actually
+  done landed to the decimal (+15.35 delivered against +15.37 forecast); the
+  two that missed, eventual consistency and the sustained bonus, are the two
+  nobody worked on. **The read path is closed** — 11.02 points remain and none
+  of them are on it. Raw report in `docs/run7_results_huge_improvement/`.
+  Evidence: [`run7-platform.md`](test_results/run7-platform.md), which also
+  carries the run 5 -> 6 -> 7 progression and **closes the run 6 write-up that
+  was outstanding**; design decision 19.
+
+
+- [x] **The millisecond edge layer — built, gated, and shipped as run 7** —
   2026-08-20, branch `perf/fringe-free-aggregate`. Entry 16 made the aggregate's
   interior free and left its **edge** on SQL; under a clock-derived upper bound
   that edge lands in the current second, which under load is never empty, so
@@ -103,8 +123,10 @@ that is already finished. If a task turns out to be partly done, say which part.
   slightly *less* database CPU. **Queries is still 0.00/15**: aggregate p95
   **604 ms** against a 500 ms cliff, missed by 104 ms, and eventual consistency
   invalid on all four scenarios. Raw report in `docs/run6_results_improvement/`.
-  A `docs/test_results/` write-up and a DESIGN-DECISIONS entry are **still
-  outstanding** for this run.
+  Its `docs/test_results/` write-up was folded into
+  [`run7-platform.md`](test_results/run7-platform.md) on 2026-08-21, which
+  carries the run 5 -> 6 -> 7 progression, and design decisions 16-18 cover the
+  change it shipped. **Both obligations are discharged.**
 
 
 - [x] **In-process aggregate counters — built, gated, and shipped in run 6** —
@@ -376,8 +398,15 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Next
 
-> **ACTIVE WORK — branch `perf/read-path-and-rollup`, opened 2026-08-19 from
-> `e84b6de`. Everything after this block is ON HOLD until it closes.**
+> **THE READ PATH IS CLOSED — 2026-08-21, run 7, 88.98.** The branch line
+> `perf/read-path-and-rollup` -> `perf/fringe-free-aggregate` opened 2026-08-19
+> from `e84b6de` and is merged to `main` at `dee005f`. Errors, request latency,
+> aggregate latency and load throughput are all at or within 1% of their
+> maximums; **there are no read-path points left to win.** The block below is
+> kept because its measurements are the reasoning behind every read-path
+> decision, and because two of its conclusions were later overturned by the runs
+> that followed — which is the record worth keeping. **The live work is in
+> "Next, in order" at the end of this block.**
 >
 > **The problem, stated exactly.** `main @ e84b6de` scores **95.1 / 95.8 / 94.9**
 > on the official benchmark CLI run locally, and **39.49** on the platform.
@@ -530,69 +559,141 @@ that is already finished. If a task turns out to be partly done, say which part.
 >    5.36 points per 1%, adding backends to a saturated core risks more than the
 >    latency it could buy. Removing work beats redistributing it.
 
-> **Where the remaining ~24 points are:**
+> **RUN 7 RESULT (2026-08-21, `dee005f`): 88.98, up 15.35.** Correctness 15/15
+> (75 of 75 checks) and Reliability 20/20 held for a third run. Performance
+> 38.63 -> **45.00**, Queries 0.00 -> **8.98**. Full write-up:
+> [`run7-platform.md`](test_results/run7-platform.md), which also carries the
+> run 5 -> 6 -> 7 progression and closes the run 6 write-up recorded as
+> outstanding above. Six facts govern what comes next.
 >
-> | bucket | now | ceiling | worth |
-> | --- | --- | --- | ---: |
-> | Queries — aggregate p95 | 604 ms | zero above 500 ms | **9.00** |
-> | Queries — eventual consistency | 0 of 4 | 1.5 per scenario | **6.00** |
-> | Performance — latency p95 | 588 ms | full marks at 100 ms | **5.42** |
-> | Performance — sustained bonus | stress 13,558/s | 19,800 / 24,750 | **5.00** |
-> | Performance — throughput | 14,285/s | clamps at 15,000/s | **0.95** |
-> | Performance — errors | 0.00% | **maxed — defend it** | 0 |
+> 1. **Run 6's conditional forecast resolved YES, and the pool-contention
+>    diagnosis is confirmed.** Fact 8 below asked whether `GET /logs` p95 would
+>    follow the aggregate down, and named it the tell for whether the two-slot
+>    pool was shared and saturated. Request p95 **588 -> 8.18 ms**, worth
+>    5.42 + 0.95 = **6.37 points**, above the 4-5 band that was set in advance.
+>    The ~143 aggregate statements per second were queueing in front of every
+>    other reader; deleting them freed the queue rather than merely shortening
+>    the aggregate's own wait.
+> 2. **Every forecast for work that was actually done landed to the decimal.**
+>    The run 6 table below predicted aggregate 9.00, latency 5.42, throughput
+>    0.95 and "errors: maxed, defend it". Delivered: **8.98** (1.00 ms leaves
+>    0.018 unclaimable), **5.42**, **0.95**, and errors held at **0.00%**. The
+>    only two forecasts that missed are the two nobody worked on.
+> 3. **The scoring model reproduces 88.98 exactly**, every term computed from the
+>    report's own numbers with nothing fitted. Seven runs, two CLI versions.
+>    **It is safe to plan against**; see `run7-platform.md` for the arithmetic.
+> 4. **PostgreSQL stopped being the pinned resource.** Load-scenario database CPU
+>    **76.17% -> 21.50% average** while throughput reached the offered ceiling.
+>    **This does not license widening the read pool.** There are no read-path
+>    points left to buy with concurrency — errors, request p95, aggregate p95 and
+>    load throughput are all at or within 1% of maximum — and errors are still 15
+>    points held in full at 5.36 per 1%. A change with no upside and a 15-point
+>    downside is not a trade.
+> 5. **The sustained bonus was missed by 136 logs/s, and the limiter has moved to
+>    the write path.** Stress delivered **19,664.00 logs/s** against a bar of
+>    **19,800** (tier 20,000 x 0.99 tolerance) — short by **0.69%**, worth 2.50
+>    points, with another 2.50 at 24,750. The stress plot climbs past 25,000 in
+>    stage 3 and then **collapses to ~12,000** for the final samples; the average
+>    is dragged down by the collapse, not by a ceiling. **Nothing in the resource
+>    profile explains it**: at the collapse PostgreSQL is at 29.27% average and
+>    64.44% peak, the application at 22.52% average. What does move is
+>    **ingestion p95 — 8.90 ms on load, 513 ms on stress, 1.09 s on
+>    breakpoint.** The constraint is now the flush pipeline, not the database.
+> 6. **Eventual consistency is NOT a headroom problem. The "not targeted" note
+>    that stood here is falsified — read this before reusing it.** It said the 6
+>    points were "a by-product of database headroom". Run 7 delivered headroom in
+>    abundance (21.5% database CPU, 0.00% errors, 1 ms aggregates) and EC did not
+>    move at all: 0 of 4, with `ecGetStatus` reporting **200 OK**.
 >
-> **"The last submission" was wrong and is withdrawn.** It came from an early
-> planning assumption, not from anything the platform enforces, and six runs have
-> now been made. The one-change-per-submission discipline is affordable again, so
-> prefer an attributable delta over a bundle.
+>    **What the numbers say.** Visible records were **82K / 54K / 73K / 72K**
+>    against accepted 1.80M / 2.95M / 1.51M / 2.30M. Every visible count is an
+>    exact multiple of 1,000 and no accepted count is — the signature of the
+>    `/logs` cursor walk, which pages at `limit=1000`, not of the aggregate
+>    endpoint, which returns an exact row count. **The drain fell back to the
+>    page walk on all four scenarios and never used our aggregate answer.**
 >
+>    **What the field means.** Decoded from the CLI's own source: the report's
+>    *Response Shape Valid* is `countedByAggregate`, which is **not** a check on
+>    our JSON. It is `t1(...) !== null`, and `t1` first probes
+>    `<service>-consistency-probe` and returns null **if that sentinel probe
+>    fails or returns a count greater than zero**, only then querying the real
+>    service. So the whole bucket hangs on the sentinel probe.
+>
+>    **What is not yet known** is which of those two branches fires. Static
+>    review argues against both: `service = $1` is exact equality in SQL, the
+>    counters match on a NUL-separated key so the `-consistency-probe` suffix
+>    cannot alias the real service, `count` is a JS number on both paths, and
+>    this same code passes EC on all four scenarios under the local CLI. And the
+>    platform's EC implementation is **provably not the one shipped here** — it
+>    reports `ecGetStatus` and `ecTimeoutCount`, neither of which the shipped
+>    drain produces. **Do not reason further from the local source; that is rule
+>    10.** Measure it — step (a) below.
+
+> **Where the remaining 11.02 points are:**
+>
+> | bucket | now | worth |
+> | --- | --- | ---: |
+> | Queries — eventual consistency | 0 of 4 | **6.00** |
+> | Performance — sustained bonus | stress 19,664/s vs 19,800 and 24,750 | **5.00** |
+> | Queries — aggregate p95 | 1.00 ms | 0.02 |
+> | Performance — errors | 0.00% | **maxed — defend it** |
+> | Performance — latency p95 | 8.18 ms vs a 100 ms full-marks bar | maxed |
+> | Performance — throughput | 14,999.17/s | maxed |
+>
+> 6.00 + 5.00 + 0.02 = 11.02, and 88.98 + 11.02 = 100. **Nothing else is left**,
+> and both live buckets point away from the read path.
+
 > **Next, in order.**
 >
-> **(a) Reproduce the fringe locally — free, no submission.** Drive
-> `scripts/mixed-workload.mjs` at 15,000 logs/s with its own aggregates disabled
-> (`AGGREGATE_INTERVAL_MS` high) so every aggregate statement is attributable,
-> and issue probes at the platform's **~143/s**, not the local tester's 4/s —
-> statements per request are rate-independent but queueing is not, and probing
-> at 4/s would report "mechanism confirmed, effect small" as an artifact of the
-> probe rate. **Interleave A,B,A,B,A,B at 30 s each** rather than running A then
-> B, so phase B is not measured against a larger table. Assert: phase B issues
-> **exactly 1** statement per request (2 means the left edge fired too, which is
-> misattribution, not a stronger result); no `aggregate_cache_disabled` event in
-> either phase; and `%a` in `log_line_prefix` so statements attribute by
-> `application_name` rather than by SQL text. Expect the local latency delta to
-> **understate** the platform — local PostgreSQL reaches 72-76%, not 102.6% — so
-> the statement count is the load-bearing output and the p95 is a bonus.
+> **(a) Settle the eventual-consistency probe — free, local, no submission.**
+> The largest single bucket on the board at **6.00 points**, and the experiment
+> costs nothing but time. Replicate `t1` byte-for-byte against our own stack at
+> platform scale — one service holding ~1.8M rows inside a 120 s window, which
+> the local CLI's fixture never produces — and record, for **both** the
+> `-consistency-probe` sentinel and the real service, the HTTP status, the exact
+> response body, and the summed bucket count. Probe with `bucket=1d`,
+> `since` = window start, `until` = now + 60 s, exactly as `i0` builds it.
 >
-> **(b) Run 7 — millisecond fringe counters. BUILT 2026-08-20; the paragraph
-> below is the spec it was built to, and it was followed except that the
-> ms->second rollup it warns about does not exist — writing both layers on
-> ingest removes the surface rather than testing it.** A **total-only** millisecond
-> layer over the last ~10 s, folded into the per-second map as slots age. A
-> *filtered* query with a live right fringe must **decline** to the existing SQL
-> fragment rather than answer from a total: every graded hot-path aggregate is
-> unfiltered and the drain probe's right fringe is already free, so total-only
-> serves every graded shape at ~10,000 numbers instead of a per-key map — but
-> silently summing a total under a filter is exactly the confidently-wrong
-> answer that design decision 16 names as this cache's whole risk. Compute the
-> entry bound from (a) rather than estimating it, and check it against
-> `MAX_CELLS`, which **disables** the cache rather than degrading it. The
-> ms->second rollup is a new off-by-one surface: add that boundary to the parity
-> gate and mutation-test it alongside the existing four, or the gate stops being
-> load-bearing exactly where the new risk is.
+> Four outcomes, each naming a different next action:
 >
-> **(c) Run 8 — drop `logs_attributes_gin_idx`.** See the corrected gate below.
+> | outcome | means | action |
+> | --- | --- | --- |
+> | sentinel returns non-zero | a filter bug on an unknown service | fix it; worth all 6 points |
+> | real probe returns short of accepted | the aggregate undercounts at scale | audit coverage and the cell valve |
+> | either request fails at 1.8M rows | a scale-dependent failure the local fixture hides | reproduce, then fix |
+> | both correct | the failure is platform-side and invisible from here | stop spending on EC; go to (b) |
 >
-> **Not targeted: the 6 eventual-consistency points.** They are a by-product of
-> database headroom, not a separate problem — the drain rate is the same
-> saturated-PostgreSQL story as everything else, and the best build on this
-> platform converts only 2 of 4 scenarios anyway. Bank the aggregate bucket
-> first.
+> **Run this before building anything.** Three of the four outcomes lead
+> somewhere different, and the fourth saves a submission.
 >
-> **Design decision 15 needs a follow-up entry, not an edit.** Its justification
-> for `QUERY_POOL_SIZE: 2` was "eight concurrent unindexed reads returned all
-> eight HTTP 500". Those reads were aggregates, and they no longer touch the
-> database — the pool is currently sized for a query shape that has been deleted.
-> Re-derive the size against the read mix that actually exists now.
+> **(b) Run 8 — the write pipeline, for the 5-point sustained bonus.** Fact 5
+> puts the stress collapse in the flush path with both CPUs idle. Two levers
+> were parked on a saturated database that no longer exists:
+>
+> - **The `logs_agg_1m` upsert inside every flush transaction** — the half of
+>   Stage 2 that was cut. **It cannot simply be deleted:** the SQL fallback
+>   still reads that table (`src/query/repository.ts:384`), and that path is
+>   still reachable for grouped queries, `q` and attribute filters, windows
+>   outside the two-hour cache, and any run where the cache disables itself.
+>   Removing the upsert means first re-pointing the fallback at raw `logs`, and
+>   that is a correctness change to a path the counters do not cover — it needs
+>   its own parity gate, not a deletion.
+> - **Flush concurrency 1 -> 2** (Stage 3). `pump()`
+>   (`src/ingest/batcher.ts:103`) is single-flight, which is what keeps flushes
+>   from overlapping on hot rollup keys. Safe only once the rollup upsert is out
+>   of the flush transaction, so it is strictly downstream of the item above.
+>
+> Ship **one** of these per submission. The one-change-per-submission discipline
+> is affordable and run 7 shows exactly what a clean attribution is worth.
+>
+> **(c) Run 9 — drop `logs_attributes_gin_idx`.** See the corrected gate below.
+> Lowest priority of the three: it is a capability trade rather than a free win,
+> and it targets a write-path cost that (b) addresses more directly.
+>
+> **Design decision 15's follow-up is complete.** Entry 17 replaced its expired
+> reasoning; **entry 19 supplies the measurement entry 17 said it lacked**, from
+> run 7. The pool stays at 2 and the question is closed — reopen it only with a
+> read mix that is not dominated by cheap keyset reads.
 >
 > **Migration 004 has met its own re-measure condition.** It did *not* assume
 > the workload never filters by service — it measured a service-filtered cursor
