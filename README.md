@@ -3,21 +3,6 @@
 **A log-ingestion service that accepts 15,000 logs/second and answers queries in
 single-digit milliseconds — inside half a CPU core and 256 MB of memory.**
 
-TypeScript on Bun 1.3.14, Fastify 5 and PostgreSQL 16. Every design choice in
-this repository is recorded with the measurement that justifies it and the test
-that guards it.
-
-| | |
-| --- | --- |
-| **Stack** | Bun 1.3.14 · Fastify 5 · PostgreSQL 16 · Docker Compose |
-| **Resource envelope** | application **0.5 CPU / 256 MB** · database **1 CPU / 1 GB** |
-| **Measured total** | **95.68** mean over six consecutive runs, best **96.11** (maximum 100) |
-| **Ingest throughput** | **14,999 logs/s** at **0.000% errors** — in all six runs |
-| **Correctness** | **15 / 15**, zero variance across all six runs |
-| **Reliability** | **20 / 20**, zero variance across all six runs |
-| **Other gates** | **41 / 41** tests · **73 / 73** reliability probes |
-| **Durability** | every acknowledged row survived restart and SIGTERM — 398,600 / 398,600 |
-
 ---
 
 ## The result
@@ -57,6 +42,30 @@ xychart-beta
   `serviceLimited: false`. On stress, spike and breakpoint it records
   `generatorLimited: true` — the load generator could not keep up. **Performance
   and Queries are floors, not ceilings.**
+
+<sub>[↑ Where to go next](#where-to-go-next)</sub>
+
+---
+
+## What it is
+
+TypeScript on Bun 1.3.14, Fastify 5 and PostgreSQL 16. Clients post batches of
+logs; every entry is validated independently, accepted rows are group-committed,
+and a `200` means the rows are committed **and** queryable. Every design choice
+in this repository is recorded with the measurement that justifies it and the
+test that guards it.
+
+| | |
+| --- | --- |
+| **Stack** | Bun 1.3.14 · Fastify 5 · PostgreSQL 16 · Docker Compose |
+| **Resource envelope** | application **0.5 CPU / 256 MB** · database **1 CPU / 1 GB** |
+| **Endpoints** | `POST /logs` · `GET /logs` · `GET /logs/aggregate` · `GET /health` · `GET /metrics` |
+| **Ingest throughput** | **14,999 logs/s** at **0.000% errors** — in all six runs |
+| **Correctness** | **15 / 15**, zero variance across all six runs |
+| **Reliability** | **20 / 20**, zero variance across all six runs |
+| **Other gates** | **41 / 41** tests · **73 / 73** reliability probes |
+| **Durability** | every acknowledged row survived restart and SIGTERM — 398,600 / 398,600 |
+| **Retention** | 30 days by default, reclaimed by dropping monthly partitions |
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -261,9 +270,9 @@ startup error, never silently replaced by a default.
 | `QUEUE_MAX_ROWS` | `50000` | Backpressure cap on queued rows — exceeding it returns `503` + `Retry-After` |
 | `QUEUE_MAX_BYTES` | `33554432` | Backpressure cap on queued bytes (32 MiB) |
 | `WRITE_POOL_SIZE` | `2` | Connections reserved for the ingest transactions |
-| `QUERY_POOL_SIZE` | `8` | Connections for read traffic |
+| `QUERY_POOL_SIZE` | `8` in code, **`2` in compose** | Connections for read traffic. Sized to the database, not to the application — eight concurrent unindexed reads all failed at 5.05 s, so a wider pool converts queueing into failures |
 | `DB_CONNECT_TIMEOUT_MS` | `2000` | Connection acquisition timeout |
-| `QUERY_STATEMENT_TIMEOUT_MS` | `10000` in code, `5000` in compose | Server-side `statement_timeout` on the query pool, so an abandoned HTTP request cannot pin a backend forever. Attribute filters are index-backed, so this is a backstop for the remaining scan-shaped query, `q` |
+| `QUERY_STATEMENT_TIMEOUT_MS` | `10000` in code, **`8000` in compose** | Server-side `statement_timeout` on the query pool, so an abandoned HTTP request cannot pin a backend forever. Attribute filters are index-backed, so this is a backstop for the remaining scan-shaped query, `q` |
 | `HOT_ATTRIBUTE_KEYS` | `trace_id` in code, `` (empty) in compose | Comma-separated attribute keys that get a dedicated partial, ordered index (see [Indexes](#indexes)). Empty string ships no attribute indexes at all |
 | `CURSOR_SECRET` | random per process start if unset | HMAC key that signs pagination cursors. Compose pins a development value so cursors stay valid across container restarts; unset, cursors minted before a restart are rejected |
 | `SHUTDOWN_TIMEOUT_MS` | `15000` | Graceful-shutdown budget: drain in-flight batches, then exit |
@@ -433,66 +442,122 @@ is not part of the API contract.
 
 ## Architecture
 
+```mermaid
+%%{init: {'theme':'neutral'}}%%
+flowchart LR
+    POST["POST /logs"]
+    GETL["GET /logs"]
+    GETA["GET /logs/aggregate"]
+    HLTH["GET /health"]
+    RETW["retention worker"]
+
+    subgraph WRITE ["write path — group commit"]
+        direction TB
+        V["validate each entry<br/>mirrors every database constraint<br/>rejections keep their array index"]
+        Q["bounded queue<br/>capped by rows AND bytes<br/>full ⇒ 503 + Retry-After"]
+        G["one transaction<br/>COPY raw rows in 64 KiB chunks<br/>+ minute-rollup upsert"]
+        K["COMMIT<br/>then resolve every waiting request"]
+        V --> Q --> G --> K
+    end
+
+    subgraph READ ["read path"]
+        direction TB
+        R1["cursor decode<br/>keyset predicate"]
+        R2["rollup interior<br/>+ exact raw edge slices"]
+        R3["readiness flag<br/>+ live database probe"]
+    end
+
+    M["advisory lock<br/>DROP expired partitions<br/>batched SKIP LOCKED sweep<br/>rollup expiry"]
+
+    POST --> V
+    GETL --> R1
+    GETA --> R2
+    HLTH --> R3
+    RETW --> M
+
+    K --> DB
+    R1 --> DB
+    R2 --> DB
+    R3 --> DB
+    M --> DB
+
+    DB[("PostgreSQL 16<br/>monthly partitions<br/>+ minute rollup<br/><br/>source of truth")]
 ```
-                          ┌──────────────────────────────────────────────────────┐
-  POST /logs ────────────▶│ validate each entry (mirrors every DB constraint)      │
-                          │        │  rejected[i] carries the original array index │
-                          │        ▼                                               │
-                          │ bounded queue — capped by rows AND bytes                │
-                          │        │  (full ⇒ 503 + Retry-After, never a false 200)│
-                          │        ▼                                               │
-                          │ group commit: N requests → 1 transaction                │
-                          │   COPY raw rows (64 KiB chunks) + minute-rollup upsert │
-                          │        ▼                                               │
-                          │ COMMIT → resolve every waiting request                  │
-                          └───────────────┬─────────────────────────────────────────┘
-                                          │
-  GET /logs ─────────────▶ parse → cursor decode → keyset predicate ──┼──▶ PostgreSQL
-  GET /logs/aggregate ───▶ parse → rollup interior + raw edge slices ─┤    (source of truth)
-  GET /health ───────────▶ readiness flag + live database probe ──────┤
-                                                                      │
-  retention worker ──────▶ advisory lock → drop expired partitions ───┘
-                           → batched SKIP LOCKED boundary sweep
-                           → rollup expiry (same retention policy)
-```
 
-**Module layering is strict:** HTTP handler → service → repository → SQL. No
-SQL in a handler; no `Request` object below the handler. Routes live in
-`src/app.ts`; parsing and validation in `src/ingest/validation.ts` and
-`src/query/parser.ts`; the batcher (`src/ingest/batcher.ts`) and the query
-repository (`src/query/repository.ts`) are the services; `src/ingest/repository.ts`
-and the query builders are the only places SQL is written. Configuration is
-read exactly once, strictly typed, in `src/config.ts`.
+### Module layering is strict
 
-**Why group commit?** Writing one transaction per HTTP request means one
-round-trip and one WAL sync per request, and under concurrency those requests
-contend on the same tables. Coalescing queued requests into one transaction
-amortises the round-trips and WAL work over thousands of rows, keeps the raw
-rows and their rollup deltas in the *same* transaction so committed counts can
-never diverge from committed rows, and — because a request is answered only
-after its transaction commits — makes "accepted" and "persisted and queryable"
-the same event. Freshness holds by construction, with no background
-reconciliation.
+No SQL in a handler; no `Request` object below the handler.
 
-**How large is a batch?** However large the backlog is. A flush takes the
-entire queue rather than a configured number of rows, because its cost —
-connection checkout, `BEGIN`, `SET LOCAL`, the rollup upsert, `COMMIT` — is
-fixed per transaction, not per row. Capping a batch below what is already
-waiting pays that cost again for no reason and leaves the remainder to wait for
-another round trip, which is how a queue turns a throughput shortfall into a
-latency collapse. `QUEUE_MAX_ROWS` and `QUEUE_MAX_BYTES` are what bound a
-single transaction, and they are enforced at admission, so backpressure still
-surfaces as `503` + `Retry-After` rather than unbounded memory.
+| layer | responsibility | where it lives |
+| --- | --- | --- |
+| **HTTP handler** | routing only | `src/app.ts` |
+| **Parsing & validation** | reject at the edge, per entry | `src/ingest/validation.ts` · `src/query/parser.ts` |
+| **Service** | batching, query orchestration | `src/ingest/batcher.ts` · `src/query/repository.ts` |
+| **Repository** | **the only place SQL is written** | `src/ingest/repository.ts` · the query builders |
+| **Configuration** | read exactly once, strictly typed | `src/config.ts` |
 
-**What a 200 means:** every accepted entry in the request is committed and
-immediately queryable. (The durability profile determines how crash-durable
-"committed" is — see [Durability](#durability).)
+### Why group commit
 
-Three connection pools keep roles apart: a write pool of 2 (one ingest
-transaction in flight at a time protects it from user-query contention), a
-query pool of 8 with a server-side `statement_timeout`, and a maintenance pool
-of 1 for migrations and retention, so that long-running maintenance work never
-queues behind user traffic.
+One transaction per HTTP request means one round trip and one WAL sync per
+request, and under concurrency those requests contend on the same tables.
+Coalescing queued requests into a single transaction changes four things:
+
+| | one transaction per request | **group commit** |
+| --- | --- | --- |
+| database round trips | one per request | **one per batch** |
+| WAL syncs | one per request | **one per batch** |
+| rollup consistency | a separate write that can diverge | **same transaction — counts can never diverge from rows** |
+| what a `200` means | accepted | **committed and queryable** |
+
+Because a request is answered only after its transaction commits, "accepted" and
+"persisted and queryable" are the same event. **Freshness holds by construction,
+with no background reconciliation.**
+
+### How large is a batch?
+
+**However large the backlog is.** A flush takes the *entire* queue rather than a
+configured number of rows, because its cost — connection checkout, `BEGIN`,
+`SET LOCAL`, the rollup upsert, `COMMIT` — is **fixed per transaction, not per
+row**.
+
+Capping a batch below what is already waiting pays that fixed cost again for no
+reason, and leaves the remainder waiting for another round trip. That is exactly
+how a queue turns a throughput shortfall into a latency collapse.
+
+What bounds a single transaction is `QUEUE_MAX_ROWS` and `QUEUE_MAX_BYTES`, and
+they are enforced **at admission** — so backpressure surfaces as `503` +
+`Retry-After` rather than unbounded memory.
+
+> **What a `200` means:** every accepted entry in the request is committed and
+> immediately queryable. How crash-durable "committed" is depends on the
+> durability profile — see [Durability](#durability).
+
+### Three connection pools keep roles apart
+
+Each pool has its own `application_name` and its own statement timeout, so reads
+can never exhaust the connections writes need.
+
+| pool | shipped size | serves | why that size |
+| --- | ---: | --- | --- |
+| **write** | **2** | ingest transactions | two concurrent `COPY` streams against a 1-CPU database; more writers contend rather than add capacity |
+| **query** | **2** | `GET /logs`, `GET /logs/aggregate` | **sized to the database, not to the application** — see below |
+| **maintenance** | **1** | migrations, retention | long-running work never queues behind user traffic |
+
+**Why the query pool is 2 and not wider.** Measured 2026-08-19: eight concurrent
+unindexed reads returned **all eight as HTTP 500 at 5.05 s**, cancelled by the
+statement timeout. A read pool wider than the database can actually serve does
+not buy throughput — **it converts queueing into failures.** Under load,
+PostgreSQL ran at 75.6% average of its 1.0 CPU cap while the application sat at
+5.4% of its own, so the pool is sized to the constrained resource.
+
+The read `statement_timeout` ships at **8 s** — deliberately not the 10 s code
+default. It is a backstop that bounds a `q` substring scan, and the two settings
+ship together: the narrow pool is what caps a slow scan at two backends, which
+is what made raising the timeout safe. Both are recorded with their measurements
+in [design decisions 15, 17 and 19](docs/DESIGN-DECISIONS.md).
+
+> The code *defaults* differ (`QUERY_POOL_SIZE` 8, `QUERY_STATEMENT_TIMEOUT_MS`
+> 10000). `docker-compose.yml` is what ships, and it overrides both.
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -1128,7 +1193,7 @@ either way.
   substring match with no trigram support — deliberate (see
   [Indexes](#indexes)). `attr.<key>` equality is no longer in this category:
   the `jsonb_path_ops` GIN index answers any key, and a hot key additionally
-  buys sort-free cursor order. The compose `QUERY_STATEMENT_TIMEOUT_MS=5000` is
+  buys sort-free cursor order. The compose `QUERY_STATEMENT_TIMEOUT_MS=8000` is
   the backstop for a `q` scan on a large table.
 - **The application container is the binding constraint — confirmed on native
   Linux.** It sits at ~99% of its 0.5-CPU cap on the write path and ~89% on the

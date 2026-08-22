@@ -10,6 +10,23 @@ quality, typing and presentation — see **Next** below. Every performance item
 still written in this file is marked **NEVER IMPLEMENTED** and is history, not a
 backlog.
 
+> **WHICH HARNESS IS THE RESULT — read this before quoting any number.**
+> **The official benchmark CLI, run locally, is the required source of truth**
+> (owner instruction, 2026-08-22). The hosted evaluation service that produced
+> runs 1–7 was **retired during the project** — it was too slow to evaluate each
+> submission — and local CLI runs were made the measurement of record instead.
+>
+> - **The result** is the six-run session at `1b6ee2d`: mean **95.68**, best
+>   **96.11**, Correctness **15/15** and Reliability **20/20** with zero variance
+>   in all six. Evidence: `bench-runs/BENCHMARK-RESULTS.md`.
+> - **The hosted runs (39.30 → 88.98) are history, not the result.** They remain
+>   the record of *how the service was improved*, and every conclusion they
+>   overturned is still worth reading — but do not present 88.98 as the outcome.
+> - **Never average or compare the two.** They ran different tester versions on
+>   hardware differing by ~8×, and their aggregate probes ask different
+>   questions. That is measurement standard rule 10, and
+>   `docs/RESULTS.md` §6 is the worked explanation.
+
 **What ships is Fastify on Bun 1.3.14** (merged 2026-08-18), and that is what a
 bare `docker compose up` gives you. The 2x2 that decided it — Express/Fastify by
 Node/Bun — is fully measured; the three losing cells survive as branches
@@ -26,7 +43,9 @@ Windows and say so.
 | --- | --- |
 | `src/`, `scripts/`, `test/`, `load/` | The code, benchmark harnesses, correctness gates, load tests. |
 | `docker-compose.yml`, `Dockerfile`, `package.json` | What gets run: app 0.5 CPU / 256 MB, database 1 CPU / 1 GB. The app CPU cap is settled at 0.5 — do not raise it. |
-| `docs/test_results/` | Measured runs of this code on Linux — the source of truth for performance numbers. |
+| `docs/test_results/` | Measured runs of this code on Linux — the per-session write-ups behind every performance number. |
+| `docs/RESULTS.md` | **New 2026-08-22. The presentation layer for the evidence** — three parts: the six-run local CLI result, the historical hosted-harness progression, and how the evidence was made trustworthy. **Presents; does not measure.** If you change a number anywhere, check whether this file repeats it. |
+| `docs/SCHEMA.md` | **New 2026-08-22. Schema provenance** — the effective post-migration schema, where it came from, the four places it diverges from `RND.md`, a normal-form analysis, and the four migrations with their triggers. §4 is **analysis written for that document**, not a record of a past decision, and says so in its own text. |
 | `docs/DESIGN-DECISIONS.md` | **Why the design is what it is** — one entry per choice, with the test that guards it and the measurement that justifies it. **Add an entry whenever you make a design choice.** |
 | `plan/` | The delivery plan: `00-MASTER-PLAN.md` (thesis + schedule), `HANDOFF.md` (state of the build), `05-BENCHMARK-PROTOCOL.md` (how we measure), `08-DATABASE-COST-REDUCTION.md` (**the work in flight — read this before touching the database**). |
 | `plan/internal/SANITIZATION.md` | **Pre-push review. Read it before every commit/push.** Gitignored — never tracked. |
@@ -72,9 +91,56 @@ that is already finished. If a task turns out to be partly done, say which part.
 
 ### Done
 
+- [x] **Presentation layer built: `docs/RESULTS.md`, `docs/SCHEMA.md`, and a
+  rewritten README** — 2026-08-22. The documentation phase's first substantial
+  output. **No measurement was taken and no code was changed**; all three files
+  present evidence that already existed, and every figure was re-derived from
+  its source before being written down.
+
+  **`docs/RESULTS.md`** — three parts. Part I is the result (the six-run local
+  CLI session, then the six-build regression-gate series). Part II is the
+  historical hosted-harness progression 39.30 → 88.98, explicitly labelled as
+  history. Part III is how the evidence was made trustworthy — mutation testing,
+  the eight killed hypotheses, the nine overturned conclusions, the measurement
+  standard, and what is deliberately not claimed. **`docs/SCHEMA.md`** — schema
+  provenance, the four divergences from `RND.md`, a normal-form analysis, the
+  four migrations, retention, and limits. **README** — restructured so the
+  result opens the file, with a nav table, per-section back-links, and Mermaid
+  diagrams on the muted `neutral` theme.
+
+  **Six factual corrections were made along the way. Do not regress them:**
+
+  | corrected | was | is |
+  | --- | --- | --- |
+  | `QUERY_POOL_SIZE` in README (3 places) | `8` | **`8` in code, `2` in compose** — decision 8 was superseded by 15/17/19 and the README never caught up |
+  | `QUERY_STATEMENT_TIMEOUT_MS` in README (3 places) | `5000` | **`8000` in compose** |
+  | `docs/conclusion.md` links (2) | file does not exist | repointed at `docs/RESULTS.md` |
+  | `docs/linux-verification-results.md` links (4) | wrong path | `docs/test_results/…` |
+  | README status line | dated 2026-08-16, said query-performance targets "remain open" | replaced; they closed |
+  | `39.30` attribution | almost captioned "run 3" | **it appears once in this repo, at `agents.md` line ~913, as the start of the phase-1 delta. Nothing ties it to a run number** — label it "pre-phase-1 baseline" |
+
+  **Three counting traps found while writing, worth knowing before you quote
+  them:** `git branch -r` lists `origin` itself, so the branch count is **15**,
+  not 16; the root `benchmark-report.json` is **byte-identical to
+  `bench-runs/g6run3.json`**, so 13 report files are **12** distinct runs; and
+  the two mutation rounds **overlap** — the edge-layer round's ten defects
+  include all four from the counters round — so the honest total is **10
+  distinct**, not 14.
+
+  **Gates:** `SANITIZATION.md` §2 greps clean on all three files, every internal
+  link and in-page anchor resolves, Mermaid fences balanced. **The Mermaid blocks
+  are syntax-reviewed but not render-verified** — that needs GitHub or a preview,
+  and is the one open verification item.
+
+  **Not committed.** `README.md` is modified; `docs/RESULTS.md` and
+  `docs/SCHEMA.md` are untracked. Nothing has been pushed, so none of this
+  exists off the working machine yet.
+
 - [x] **Official CLI, six runs on Linux — correctness holds at 15/15, and the
   generator is the constraint** — 2026-08-21, seed `6122026`, `--full --runner
-  docker`. Three runs at the documented `--generator-cpus 4` scored **96.111 /
+  docker`. **This session is now the project's measurement of record** — see the
+  harness note at the top of this file. Three runs at the documented
+  `--generator-cpus 4` scored **96.111 /
   94.880 / 96.036** (mean **95.676**, spread **1.230**); three more at
   `--generator-cpus 6` scored **94.927 / 94.671 / 94.733** (mean **94.777**).
   **Correctness 15/15 and Reliability 20/20 in all six**, no cap applied,
@@ -457,12 +523,37 @@ that is already finished. If a task turns out to be partly done, say which part.
 > instruction — never an inference from the fact that the item is still written
 > down here.
 
-> **CURRENT FOCUS — 2026-08-21: the repository itself.**
+> **CURRENT FOCUS — 2026-08-21, still current at 2026-08-22: the repository
+> itself.**
 >
 > The work now is documentation, code quality, type rigour and presentation. The
 > service is finished as an optimization target; what is unfinished is how well
 > it reads, how clearly it explains itself, and how it presents to someone
 > encountering it for the first time.
+>
+> **Progress, 2026-08-22.** The **presentation** area has had its first
+> substantial pass — `docs/RESULTS.md`, `docs/SCHEMA.md` and a restructured
+> README; see the top entry in Done. **Documentation, code cleanliness and
+> typing have not been touched.**
+>
+> **Open items left by that pass**, none of them blocking:
+>
+> - **The three files are uncommitted.** `README.md` modified,
+>   `docs/RESULTS.md` and `docs/SCHEMA.md` untracked. Run `SANITIZATION.md`
+>   §1–§3 before committing; §2 was already run clean against all three.
+> - **The Mermaid diagrams are syntax-reviewed but not render-verified.** Nine
+>   blocks across the three files. Confirm on GitHub or in a preview.
+> - **`docs/test_results/run7-platform.md` and `run5-read-path.md` still read as
+>   if the hosted harness is the graded instrument**, because they were written
+>   when it was. They are accurate as historical records. A one-line header on
+>   each noting the harness was later retired would remove the ambiguity — not
+>   done, and it is an owner call whether it is worth editing settled files.
+> - **`docs/SCHEMA.md` §4 is new analysis, not a recorded decision.** If it ever
+>   needs to become one, it takes a `DESIGN-DECISIONS.md` entry; until then the
+>   in-file label is what keeps it honest.
+> - **The README's `Performance` section still predates the current
+>   configuration** and says so in its own caveat. It was left in place rather
+>   than rewritten.
 >
 > **No task list is set deliberately.** The areas are:
 >
