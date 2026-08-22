@@ -1609,19 +1609,96 @@ configuration measured.
 
 ## Optional features
 
-Every optional behaviour below is documented with its default state. The
-zero-config `docker compose up` remains contract-compatible with all of them
-at their defaults.
+**Everything here is off, or set to its safe value, by default.** A bare
+`docker compose up` gives you the plain core service, and every toggle below
+leaves the API contract unchanged whichever way it is set.
 
-| Feature | Default | Enable / disable |
-| --- | --- | --- |
-| Strict durability | **Off** | `SYNC_COMMIT=on` in the compose environment (or the deployment env) makes `200` crash-durable; `SYNC_COMMIT=off` (default) is the throughput profile. Both are contract-compliant |
-| Hot attribute indexes | **None** (compose ships `HOT_ATTRIBUTE_KEYS=`) | `HOT_ATTRIBUTE_KEYS=trace_id,request_id` adds a partial ordered index per key; empty disables all attribute indexes and removes them at startup. Keys must match the identifier character set. Each key costs a JSONB extraction and a scattered B-tree write on every ingested row, so index a key only where reads actually filter on it |
-| Fixed cursor secret | **Development value in compose** | Compose sets `CURSOR_SECRET` so cursors survive restarts; unset it to mint a random secret per start (cursors invalidated across restarts). A production deployment should set its own |
-| Host port mapping | **`8080`** | `HOST_PORT=<port> docker compose up` publishes the service on another host port |
+| | Feature | Default | Turn it on with |
+| --- | --- | --- | --- |
+| 🔒 | **Strict durability** | `off` — throughput profile | `SYNC_COMMIT=on` |
+| 🔎 | **Hot attribute indexes** | none — compose ships the list empty | `HOT_ATTRIBUTE_KEYS=trace_id,request_id` |
+| 🚫 | **Ingest age floor** | `0` — accept any age | `MAX_LOG_AGE_DAYS=30` |
+| 🔑 | **Stable cursor secret** | a development value in compose | `CURSOR_SECRET=<your own>` |
+| 🔌 | **Host port** | `8080` | `HOST_PORT=8081` |
+| 🗓️ | **Retention window** | `30` days | `RETENTION_DAYS=<n>` |
 
-The default configuration — group commit with `synchronous_commit = off`,
-30-day retention, no attribute indexes — is the plain core service with all
-four endpoints unauthenticated.
+---
+
+### 🔒 Strict durability — `SYNC_COMMIT`
+
+| | |
+| --- | --- |
+| **Default `off`** | The ingest transaction commits **without waiting for a WAL flush**. Faster, and an unclean host crash can lose a window of already-acknowledged writes |
+| **`on`** | The commit waits. A `200` becomes **crash-durable** |
+| **Either way** | A `200` still means committed and queryable. Both profiles are contract-compliant |
+
+**This is the one toggle to make a deliberate decision about.** See
+[Durability](#durability) and
+[design decision 7](docs/DESIGN-DECISIONS.md#7-synchronous_commit--off-but-wal-kept).
+
+### 🔎 Hot attribute indexes — `HOT_ATTRIBUTE_KEYS`
+
+Adds a **partial, ordered index per named key**, so `attr.<key>=…` lookups come
+back in cursor order with no sort.
+
+| | |
+| --- | --- |
+| **Default** | Empty — compose ships **no** attribute index of this kind |
+| **Cost** | A JSONB extraction and a scattered B-tree write **for every row carrying that key**. The index is *partial*, so rows without the key cost nothing |
+| **Constraint** | Keys must match the identifier character set — enforced at config load, which is what makes it safe to emit the key as a SQL literal |
+| **Rule of thumb** | Index a key only where reads **actually filter on it** |
+
+Setting it back to empty **removes the indexes at startup**. Arbitrary attribute
+equality still works without any of this — the `jsonb_path_ops` GIN answers any
+key. See [Indexes](#indexes).
+
+### 🚫 Ingest age floor — `MAX_LOG_AGE_DAYS`
+
+Rejects entries whose timestamp is older than *n* days, per entry, at the edge.
+
+**It is off by default on purpose.** Turning it on is a **change to the ingest
+contract**: a client backfilling history gets a per-entry rejection where it
+previously got a `200`. It is deliberately *not* derived from
+`RETENTION_DAYS` — so upgrading cannot silently start refusing data that used to
+be accepted.
+
+> **The trade it addresses.** With the floor off, a backdated row lands in the
+> `DEFAULT` partition, which the monthly drop never reclaims — so retention has
+> to sweep it row by row. Rejecting the row is more honest than accepting it and
+> deleting it later; but honesty here costs compatibility, so you choose.
+
+See [design decision 9](docs/DESIGN-DECISIONS.md#9-ingest-validation-per-entry-with-an-opt-in-age-floor).
+
+### 🔑 Cursor secret — `CURSOR_SECRET`
+
+The HMAC key that signs pagination cursors.
+
+| | |
+| --- | --- |
+| **Unset** | A random secret is generated **per process start**, so cursors minted before a restart are rejected |
+| **Compose default** | A pinned development value, so cursors survive restarts while you are testing |
+| **Production** | **Set your own.** Treat it as a secret — it is what stops a cursor being forged or replayed against a different filter set |
+
+### 🔌 Host port · 🗓️ Retention window
+
+`HOST_PORT=8081 docker compose up -d --wait` publishes on another host port —
+the mapping is `"${HOST_PORT:-8080}:8080"`. `RETENTION_DAYS` sets the cutoff;
+expired **whole partitions drop immediately**, and anything left over the
+boundary is swept in bounded batches.
+
+---
+
+### What the defaults give you
+
+Group commit with `synchronous_commit = off`, 30-day retention, no attribute
+indexes beyond the GIN, and all four endpoints reachable.
+
+> **There is no authentication.** Every endpoint is open, by design — this is a
+> service intended to sit behind something that terminates trust, not on a
+> public address. Nothing in this repository adds authentication, and nothing
+> pretends to.
+
+The full environment surface, including the values not listed here, is in
+[Configuration](#configuration).
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
