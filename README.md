@@ -11,8 +11,12 @@ single-digit milliseconds — inside half a CPU core and 256 MB of memory.**
 Six consecutive runs in one session at commit `1b6ee2d` — same seed, same
 command, `--full --runner docker`:
 
+> **New to these terms?** *p95*, *aggregate p95*, *eventual consistency*,
+> *generator-limited* and everything else used below are defined in plain
+> language in the **[glossary](docs/GLOSSARY.md)**.
+
 ```mermaid
-%%{init: {'theme':'neutral'}}%%
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Six consecutive runs of the official benchmark CLI"
     x-axis ["run 1", "run 2", "run 3", "6-cpu 1", "6-cpu 2", "6-cpu 3"]
@@ -80,7 +84,7 @@ shape of the climb is the interesting part: **three of the four changes were
 worth about a point between them.**
 
 ```mermaid
-%%{init: {'theme':'neutral'}}%%
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Historical progression across five recorded submissions"
     x-axis ["baseline", "run 4", "run 5", "run 6", "run 7"]
@@ -103,10 +107,10 @@ xychart-beta
 different tester versions on hardware differing by roughly 8×, and their
 aggregate probes ask different questions — one issues zero SQL statements where
 the other issued one per request. Why that is, and what it cost to learn, is
-[docs/RESULTS.md](docs/RESULTS.md) §6.
+[docs/RESULTS.md §6](docs/RESULTS.md#6-why-the-two-harnesses-disagree).
 
 Full evidence, including the runs that failed and the nine conclusions later
-measurements overturned: **[docs/RESULTS.md](docs/RESULTS.md)**.
+measurements overturned: **[docs/RESULTS.md](docs/RESULTS.md#3-the-optimization-journey)**.
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -115,7 +119,7 @@ measurements overturned: **[docs/RESULTS.md](docs/RESULTS.md)**.
 ## How it works
 
 ```mermaid
-%%{init: {'theme':'neutral'}}%%
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 flowchart LR
     C["client"] -->|"POST /logs"| V["validate<br/>each entry independently"]
     V --> Q["bounded queue<br/>capped by rows and bytes"]
@@ -181,6 +185,7 @@ Three examples of what that bought:
 | --- | --- |
 | **[docs/RESULTS.md](docs/RESULTS.md)** | What was measured, in what order, and what changed — with the mistakes |
 | **[docs/SCHEMA.md](docs/SCHEMA.md)** | How the schema came to be, how it evolved, and what normal form it is in |
+| **[docs/GLOSSARY.md](docs/GLOSSARY.md)** | Every performance term used here, defined in plain language |
 | **[docs/DESIGN-DECISIONS.md](docs/DESIGN-DECISIONS.md)** | One entry per choice, with its guard and its evidence |
 | **[docs/test_results/](docs/test_results/)** | The raw measurement write-ups, per session |
 | [Quick start](#quick-start) · [API](#api) | Run it, and call it |
@@ -190,59 +195,116 @@ Three examples of what that bought:
 > **A note on the sections below.** This README also serves as the full
 > reference: API contract, schema, indexes, cursor design, retention and
 > durability. The [Performance](#performance) section further down predates the
-> current configuration and says so in its own caveat — **[docs/RESULTS.md](docs/RESULTS.md)
+> current configuration and says so in its own caveat — **[docs/RESULTS.md](docs/RESULTS.md#1-six-consecutive-runs-of-the-official-cli)
 > carries the current numbers.**
 
 ---
 
 ## Quick start
 
-Prerequisites: Docker with the compose plugin. Everything else ships in the
-repository.
+**Prerequisites:** Docker with the compose plugin. Everything else ships in this
+repository — no local Node, Bun or PostgreSQL needed.
+
+### 1 · Start it
 
 ```bash
 docker compose up -d --wait
-curl -s http://localhost:8080/health
-# → {"status":"ok"}
 ```
 
-`--wait` blocks until both containers are healthy. Migrations and partition
-pre-creation run automatically at startup; `/health` answers `200` only after
-they complete.
-
-The four endpoints, end to end:
+`--wait` blocks until both containers report healthy. Migrations and partition
+pre-creation run automatically at startup, and `/health` returns `200` **only
+after they finish**:
 
 ```bash
-# POST /logs — ingest a batch. One entry is invalid ("fatal" is not a level);
-# it is rejected by its original index while the valid sibling is accepted.
+curl -s http://localhost:8080/health
+```
+
+```json
+{ "status": "ok" }
+```
+
+### 2 · Send some logs
+
+Two entries, one of them deliberately invalid — `fatal` is not a level:
+
+```bash
 curl -s http://localhost:8080/logs \
   -H 'content-type: application/json' \
   -d '{
     "logs": [
-      {"timestamp":"2026-08-16T09:00:00.123456Z","level":"info","service":"checkout","message":"order placed","attributes":{"trace_id":"abc-123","region":"eu-west"}},
-      {"timestamp":"2026-08-16T09:00:00.200000Z","level":"fatal","service":"checkout","message":"invalid level"}
+      {
+        "timestamp": "2026-08-16T09:00:00.123456Z",
+        "level": "info",
+        "service": "checkout",
+        "message": "order placed",
+        "attributes": { "trace_id": "abc-123", "region": "eu-west" }
+      },
+      {
+        "timestamp": "2026-08-16T09:00:00.200000Z",
+        "level": "fatal",
+        "service": "checkout",
+        "message": "this one gets rejected"
+      }
     ]
   }'
-# → {"accepted":1,"rejected":[{"index":1,"reason":"invalid level: '\''fatal'\''"}]}
-
-# GET /logs — filter and page (newest first)
-curl -s 'http://localhost:8080/logs?service=checkout&level=info&limit=2'
-# → {"logs":[{...}],"next_cursor":"eyJ2IjoxLCJ0IjoiMjAyNi0wOC0xNlQwOTowMDowMC4xMjM0NTZaIiwi..."}
-
-# GET /logs/aggregate — bucket counts per hour, grouped by service
-curl -s 'http://localhost:8080/logs/aggregate?since=2026-08-16T00:00:00Z&until=2026-08-16T12:00:00Z&bucket=1h&group_by=service'
-# → {"buckets":[{"start":"2026-08-16T09:00:00.000000Z","group":"checkout","count":1}]}
 ```
 
-The host port mapping is `"${HOST_PORT:-8080}:8080"`, so if port 8080 is
-already taken on your machine, `HOST_PORT=8081 docker compose up -d --wait`
-and point every curl at `http://localhost:8081`.
+```json
+{ "accepted": 1, "rejected": [{ "index": 1, "reason": "invalid level: 'fatal'" }] }
+```
 
-Stop with `docker compose down`; add `-v` to also discard the database volume.
-Note that migrations are checksummed — editing a file under
-`src/db/migrations/` against an existing volume fails startup with
-`applied migration 001_init.sql was modified`; reset with
-`docker compose down -v`.
+**The valid entry was accepted anyway**, and the rejection points at `index: 1`
+— its position in the array you sent. One bad entry never costs you the rest of
+the batch.
+
+### 3 · Read them back
+
+```bash
+curl -s 'http://localhost:8080/logs?service=checkout&level=info&limit=2'
+```
+
+```json
+{
+  "logs": [{ "id": "1", "timestamp": "2026-08-16T09:00:00.123456Z", "level": "info", "...": "..." }],
+  "next_cursor": "eyJ2IjoxLCJ0IjoiMjAyNi0wOC0xNlQwOTowMDowMC4xMjM0NTZaIiwi..."
+}
+```
+
+Newest first. Pass `next_cursor` back as `?cursor=` to get the following page.
+
+### 4 · Count them
+
+```bash
+curl -s 'http://localhost:8080/logs/aggregate?since=2026-08-16T00:00:00Z&until=2026-08-16T12:00:00Z&bucket=1h&group_by=service'
+```
+
+```json
+{ "buckets": [{ "start": "2026-08-16T09:00:00.000000Z", "group": "checkout", "count": 1 }] }
+```
+
+### 5 · Stop it
+
+```bash
+docker compose down
+```
+
+Add `-v` to discard the database volume as well.
+
+---
+
+<details>
+<summary><b>If something goes wrong</b></summary>
+
+<br>
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Port 8080 already in use | The mapping is `"${HOST_PORT:-8080}:8080"` | Start with `HOST_PORT=8081 docker compose up -d --wait` and point every `curl` at `http://localhost:8081` |
+| Startup fails with `applied migration 001_init.sql was modified` | Migrations are **checksummed**. A file under [`src/db/migrations/`](src/db/migrations/) was edited against an existing volume | `docker compose down -v` to reset, then start again |
+| `/health` returns `{"status":"starting"}` | Migrations are still running | Wait — this is the service refusing to claim readiness it does not have |
+| `/health` returns `{"status":"unavailable"}` | The live database probe failed | Check the `postgres` container: `docker compose logs postgres` |
+
+</details>
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -290,18 +352,35 @@ Compose-only variables (not read by the application):
 
 ## API
 
-All responses are JSON. Every error response uses the shape
-`{"error": "<description>"}` — with one documented exception: `POST /logs`
-answers partial or full rejection with the `accepted`/`rejected` shape.
+| | Endpoint | What it does |
+| --- | --- | --- |
+| `GET` | [**`/health`**](#get-health) | Readiness, with a live database probe on every call |
+| `POST` | [**`/logs`**](#post-logs) | Ingest a batch — each entry validated independently |
+| `GET` | [**`/logs`**](#get-logs) | Newest-first pages over a signed keyset cursor; every filter combines |
+| `GET` | [**`/logs/aggregate`**](#get-logsaggregate) | Time-bucketed counts, optionally grouped |
+| `GET` | [**`/metrics`**](#get-metrics) | Operational counters — *not part of the API contract* |
+
+All responses are JSON. Every error uses the shape `{"error": "<description>"}`
+— with **one documented exception**: `POST /logs` reports partial *or* full
+rejection using the `accepted` / `rejected` shape instead.
+
+<details>
+<summary><b>Status codes used across every endpoint</b></summary>
+
+<br>
 
 | Status | Meaning |
 | --- | --- |
-| `200` | Success. For `POST /logs`: every accepted entry is committed and queryable |
+| `200` | Success. For `POST /logs` this means every accepted entry is **committed and queryable** |
 | `400` | Invalid request — bad filters, bad cursor, invalid body shape, or an all-invalid batch |
-| `413` | Body exceeds `BODY_LIMIT` |
-| `503` | Server-side unavailability: ingestion queue full, service shutting down, or database unreachable/saturated. Always carries `Retry-After` |
+| `413` | Body exceeds `BODY_LIMIT` (default `4mb`) |
+| `503` | Server-side unavailability: queue full, shutting down, or database unreachable. **Always carries `Retry-After`** |
 | `404` | Unknown route |
-| `500` | Internal error — no client input is supposed to reach this path |
+| `500` | Internal error — no client input is supposed to be able to reach this path |
+
+</details>
+
+---
 
 ### `GET /health`
 
@@ -310,11 +389,16 @@ curl -s http://localhost:8080/health
 # → {"status":"ok"}
 ```
 
-`200` only after migrations have run, the database has answered a readiness
-probe, and the server is listening. Before that it answers
-`503 {"status":"starting"}` — never `200` on an unready service. Every call
-also probes the database live, so an unreachable database reads as
-`503 {"status":"unavailable"}` rather than a false `200`.
+| Status | Body | When |
+| --- | --- | --- |
+| `200` | `{"status":"ok"}` | Migrations have run, the database answered, the server is listening |
+| `503` | `{"status":"starting"}` | Still starting — **never `200` on an unready service** |
+| `503` | `{"status":"unavailable"}` | The live database probe failed |
+
+Every call probes the database, so an unreachable database reads as `503`
+rather than a false `200`.
+
+---
 
 ### `POST /logs`
 
@@ -334,33 +418,38 @@ Request body:
 }
 ```
 
-Per-entry validation (mirrors every database constraint, so the database is
-never asked to be the validator):
+**Per-entry validation.** Every rule mirrors a database constraint, so the
+database is never asked to be the validator — it is the backstop.
 
-- `timestamp` — required, ISO 8601 **with an explicit offset**, and not more
-  than five minutes in the future. It is normalised exactly once and that same
-  value is used for the row, the rollup bucket, and the cursor.
-- `level` — one of `debug`, `info`, `warn`, `error`.
-- `service`, `message` — non-empty strings.
-- `attributes` — optional, **flat** object; values must be strings, finite
-  numbers, or booleans. Nested objects and arrays are rejected.
-- NUL characters (`\u0000`) are rejected in every string field — JSON permits
-  them, PostgreSQL `text` cannot store them.
+| Field | Required | Rule |
+| --- | :---: | --- |
+| `timestamp` | ✓ | ISO 8601 **with an explicit offset**; no more than **5 minutes** in the future. Normalised exactly once, and that same value is used for the row, the rollup bucket **and** the cursor |
+| `level` | ✓ | One of `debug`, `info`, `warn`, `error` |
+| `service` | ✓ | Non-empty, **≤ 255** characters |
+| `message` | ✓ | Non-empty, **≤ 65,536** characters |
+| `attributes` | — | **Flat** object. Values must be strings, finite numbers or booleans; nested objects and arrays are rejected |
 
-Response: `200` with
+> **NUL characters (`\u0000`) are rejected in every string field**, including
+> attribute keys and values. JSON permits them; PostgreSQL `text` cannot store
+> them. Accepting one would mean failing at `COPY` time, after the client had
+> already been told the entry was fine.
+
+**Response** — `200`, reporting each rejection by its **original array index**:
 
 ```json
 { "accepted": 5, "rejected": [{ "index": 3, "reason": "invalid level: 'fatal'" }] }
 ```
 
-An invalid entry never rejects a valid sibling. If **all** entries are invalid,
-the response is `400` with `accepted: 0` and the full `rejected` list. The
-`200` is sent only after the group-commit transaction has committed, so
-accepted rows are queryable the moment the response arrives (subject to the
-durability profile — see [Durability](#durability)). Other statuses: `400` for
-a body that is not an object with a `logs` array or for malformed JSON, `413`
-over `BODY_LIMIT`, `503` + `Retry-After` when the queue is full, the service is
-shutting down, or the database is unavailable.
+| Status | When |
+| --- | --- |
+| `200` | At least one entry accepted. Sent **only after the transaction commits**, so accepted rows are queryable the moment the response arrives |
+| `400` | Body is not an object with a `logs` array · malformed JSON · **every** entry invalid (`accepted: 0`, full `rejected` list) |
+| `413` | Body over `BODY_LIMIT` |
+| `503` | Queue full · shutting down · database unavailable. Always with `Retry-After` |
+
+**An invalid entry never rejects a valid sibling** — a shipper batching from
+many sources does not lose 32 good entries to one malformed one. How
+crash-durable "committed" is depends on the [durability profile](#durability).
 
 ### `GET /logs`
 
@@ -396,12 +485,21 @@ All filters combine freely, in any order. Response:
 }
 ```
 
-`id` is rendered as a JSON string (a `BIGINT` exceeds JavaScript's safe integer
-range) and `timestamp` in UTC with microsecond precision — exactly what
-PostgreSQL rendered. Rows are strictly ordered by `timestamp DESC, id DESC`.
-Invalid parameters, tampered cursors, and cursors replayed under a different
-filter set all return `400 {"error":"..."}`. A database outage returns `503`
-+ `Retry-After: 1`.
+**Three details in that response body matter:**
+
+| | |
+| --- | --- |
+| `id` is a **string** | a `BIGINT` exceeds JavaScript's safe integer range, so a number would silently round |
+| `timestamp` is **microsecond-precision UTC** | exactly what PostgreSQL rendered — the cursor round-trips it without loss |
+| ordering is **`timestamp DESC, id DESC`** | strict and total, so no row can be skipped or repeated across pages |
+
+| Status | When |
+| --- | --- |
+| `200` | Page returned. `next_cursor` is `null` **only** at the true end of the filtered result set |
+| `400` | Invalid parameter · tampered cursor · cursor replayed under a **different filter set** |
+| `503` | Database unavailable, with `Retry-After: 1` |
+
+---
 
 ### `GET /logs/aggregate`
 
@@ -409,9 +507,14 @@ filter set all return `400 {"error":"..."}`. A database outage returns `503`
 GET /logs/aggregate?since=&until=&bucket=&group_by=&service=&level=&q=&attr.<key>=
 ```
 
-`since`, `until`, and `bucket` (`1m`, `5m`, `1h`, or `1d`) are required;
-`group_by` (`service` or `level`) is optional; `service` and `level` narrow the
-range. Response:
+| Parameter | Required | Rules |
+| --- | :---: | --- |
+| `since`, `until` | ✓ | ISO 8601. `since` inclusive, `until` exclusive |
+| `bucket` | ✓ | One of `1m`, `5m`, `1h`, `1d` |
+| `group_by` | — | `service` or `level` |
+| `service`, `level`, `q`, `attr.<key>` | — | Narrow the range, same semantics as `GET /logs` |
+
+Response:
 
 ```json
 {
@@ -422,19 +525,37 @@ range. Response:
 }
 ```
 
-Buckets are ordered by start ascending; empty buckets are omitted; `group` is
-`null` when `group_by` is absent. Counts are summed as `BIGINT` in SQL and
-checked against the JSON safe-integer range before conversion. See
-[Architecture](#architecture) for how the rollup table and raw slices answer
-the query.
+- Buckets are ordered by **start ascending**; empty buckets are **omitted**.
+- `group` is `null` when `group_by` is absent.
+- Counts are summed as `BIGINT` in SQL and **checked against the JSON
+  safe-integer range before conversion** — so an overflow is an error, never a
+  quietly wrong number.
+
+How the rollup table and exact raw edge slices combine to answer this is in
+[Database design](#database-design); a range whose bounds do not fall on a
+minute boundary is answered from the rollup interior **plus exact raw slices**
+for the partial edge minutes, so a whole edge minute is never counted into a
+range that does not contain it.
+
+---
 
 ### `GET /metrics`
 
-An additional operational endpoint beyond the four spec endpoints. Returns the
-batcher's counters — `queuedRows`, `queuedBytes`, `inFlightRows`, `flushes`,
-`committedRows`, `failedFlushes` — as
-`{"ingestion": {...}}`. The measurement scripts use it as a sanity check; it
-is not part of the API contract.
+> **Not part of the API contract.** An operational endpoint beyond the four
+> specified ones, used by the measurement scripts as a sanity check.
+
+Returns the batcher's counters as `{"ingestion": {…}}`:
+
+| Counter | What it tells you |
+| --- | --- |
+| `queuedRows`, `queuedBytes` | Current backlog against the two admission caps |
+| `inFlightRows` | Rows inside the transaction currently committing |
+| `flushes`, `committedRows` | Cumulative work completed |
+| `failedFlushes` | Non-zero means transactions are failing — the number to alert on |
+
+Labels are deliberately bounded: **no service names, message text or attribute
+values** ever appear here, so the endpoint cannot become a cardinality or
+data-leak surface.
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -443,7 +564,7 @@ is not part of the API contract.
 ## Architecture
 
 ```mermaid
-%%{init: {'theme':'neutral'}}%%
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 flowchart LR
     POST["POST /logs"]
     GETL["GET /logs"]
@@ -484,17 +605,50 @@ flowchart LR
     DB[("PostgreSQL 16<br/>monthly partitions<br/>+ minute rollup<br/><br/>source of truth")]
 ```
 
+### The write path, stage by stage
+
+Each box in the diagram above, and what it actually does:
+
+| stage | what happens | why it is shaped that way |
+| --- | --- | --- |
+| **1 · validate each entry** | Every entry is checked **independently** against the same limits the database enforces: level is one of four values, `service` ≤ 255 characters, `message` ≤ 65,536, timestamp is ISO 8601 with an explicit timezone and no more than **5 minutes in the future**. A rejection carries the **original array index** and a reason. | A log shipper batching from many sources should not lose 32 good entries to one malformed one. Validating at the edge turns a constraint violation into a useful per-entry error instead of a failed batch — and the database `CHECK` constraints remain the backstop nothing can bypass. |
+| **2 · bounded queue** | Valid rows join an in-process queue capped in **both rows and bytes** — `QUEUE_MAX_ROWS` (50,000) and `QUEUE_MAX_BYTES` (32 MiB). Past either cap the request is refused with `503` + `Retry-After`. | **Both caps are needed**: a byte cap alone permits an unbounded row count, and a row cap alone permits unbounded bytes. The queue lives inside a 256 MB container, so the alternative to shedding is running out of memory — or worse, answering `200` for data that was never written. |
+| **3 · one transaction** | A flush drains the **whole** queue into a single transaction: `COPY … FROM STDIN` streaming CSV in **64 KiB chunks**, plus one `INSERT … ON CONFLICT DO UPDATE` that adds this batch's deltas to the minute rollup. | `COPY` is the cheapest bulk path PostgreSQL offers, and chunking keeps the stream flowing without buffering the batch twice. Putting the rollup in the *same* transaction is what makes committed counts and committed rows inseparable. |
+| **4 · COMMIT, then reply** | Only after the transaction commits is every request waiting on that batch resolved with its own `accepted` / `rejected` result. | This is what makes a `200` mean *committed and queryable* rather than *received*. It costs acknowledgement latency, which is the trade `BATCH_DELAY_MS` tunes. |
+
+**The other boxes** have their own sections rather than being re-explained here:
+*cursor decode / keyset predicate* → [Cursor pagination](#cursor-pagination);
+*rollup interior + exact raw edge slices* → [Database design](#database-design);
+*readiness flag + live database probe* → [`GET /health`](#api); the retention
+worker's advisory lock, partition drop and boundary sweep →
+[Retention](#retention).
+
 ### Module layering is strict
 
-No SQL in a handler; no `Request` object below the handler.
+Every request flows **HTTP handler → service → repository → SQL**, and two rules
+keep the layers from bleeding into one another:
+
+- **No SQL in a handler.** A route handler never writes a query — it calls a
+  service, the service calls a repository, and the repository is the only place
+  SQL exists. That is what makes *"is every value a bound parameter?"*
+  answerable by reading two files instead of auditing the whole codebase.
+  *One deliberate exception: `GET /health` issues `SELECT 1` directly as a
+  liveness probe. It touches no table.*
+- **No `Request` object below the handler.** `Request` here means the raw HTTP
+  request — headers, body, query string. The handler extracts the parsed,
+  validated values it needs and passes **plain data** downward, so nothing
+  beneath it knows HTTP exists. That is why the batcher can be unit-tested
+  against a fake repository with no HTTP server involved. *Verified:
+  `FastifyRequest` and `FastifyReply` appear in [`src/app.ts`](src/app.ts) and nowhere else
+  in `src/`.*
 
 | layer | responsibility | where it lives |
 | --- | --- | --- |
-| **HTTP handler** | routing only | `src/app.ts` |
-| **Parsing & validation** | reject at the edge, per entry | `src/ingest/validation.ts` · `src/query/parser.ts` |
-| **Service** | batching, query orchestration | `src/ingest/batcher.ts` · `src/query/repository.ts` |
-| **Repository** | **the only place SQL is written** | `src/ingest/repository.ts` · the query builders |
-| **Configuration** | read exactly once, strictly typed | `src/config.ts` |
+| **HTTP handler** | routing, plus the `/health` liveness probe | [`src/app.ts`](src/app.ts) |
+| **Parsing & validation** | reject at the edge, per entry | [`ingest/validation.ts`](src/ingest/validation.ts) · [`query/parser.ts`](src/query/parser.ts) |
+| **Service** | batching, query orchestration | [`ingest/batcher.ts`](src/ingest/batcher.ts) · [`query/repository.ts`](src/query/repository.ts) |
+| **Repository** | **every data query lives here** | [`ingest/repository.ts`](src/ingest/repository.ts) · [`query/builder.ts`](src/query/builder.ts) · [`query/cursor.ts`](src/query/cursor.ts) |
+| **Configuration** | read exactly once, strictly typed | [`src/config.ts`](src/config.ts) |
 
 ### Why group commit
 
@@ -537,24 +691,57 @@ they are enforced **at admission** — so backpressure surfaces as `503` +
 Each pool has its own `application_name` and its own statement timeout, so reads
 can never exhaust the connections writes need.
 
-| pool | shipped size | serves | why that size |
+**The number is PostgreSQL connections** — `max` on the `pg` pool. A pool of 2
+means **at most two queries of that kind execute at once**; a third waits for a
+free connection rather than opening a new one.
+
+| pool | connections | serves | why that many |
 | --- | ---: | --- | --- |
 | **write** | **2** | ingest transactions | two concurrent `COPY` streams against a 1-CPU database; more writers contend rather than add capacity |
 | **query** | **2** | `GET /logs`, `GET /logs/aggregate` | **sized to the database, not to the application** — see below |
 | **maintenance** | **1** | migrations, retention | long-running work never queues behind user traffic |
 
-**Why the query pool is 2 and not wider.** Measured 2026-08-19: eight concurrent
-unindexed reads returned **all eight as HTTP 500 at 5.05 s**, cancelled by the
-statement timeout. A read pool wider than the database can actually serve does
-not buy throughput — **it converts queueing into failures.** Under load,
-PostgreSQL ran at 75.6% average of its 1.0 CPU cap while the application sat at
-5.4% of its own, so the pool is sized to the constrained resource.
+**Five connections in total**, against `max_connections=40` on the database. The
+limit is deliberately nowhere near the database's own — connections are not the
+scarce resource here, **CPU is**.
+
+### Why the query pool is 2 and not wider
+
+**The measurement, 2026-08-19.** Eight scan-shaped reads were issued
+concurrently against a pool of 8, so all eight ran at once, each holding its own
+backend. **All eight returned HTTP 500 at 5.05 s**, cancelled by the
+`statement_timeout` that was then set to 5 s.
+
+**The mechanism.** The database has **one CPU**. Eight scans sharing it each run
+roughly eight times slower than one scan alone would, so every one of them
+crossed the timeout — and a cancelled query returns an error, not a slow answer.
+Widening the pool did not add capacity; it just admitted more work to a resource
+that could not absorb it, and converted **queueing into failures**.
+
+At a pool of 2, two reads run and the rest **wait for a free connection**. The
+two finish inside the timeout, then the next two start. Every request is
+answered — some later than others.
+
+> **A slow answer is a result. A cancelled query is a 500.** That is the whole
+> argument for a narrow pool.
+
+The resource profile confirms which side is constrained: under load PostgreSQL
+ran at **75.6% average of its 1.0 CPU cap** while the application sat at **5.4%
+of its own**. The pool is sized to the bottleneck, not to the tier that has
+slack.
 
 The read `statement_timeout` ships at **8 s** — deliberately not the 10 s code
 default. It is a backstop that bounds a `q` substring scan, and the two settings
 ship together: the narrow pool is what caps a slow scan at two backends, which
-is what made raising the timeout safe. Both are recorded with their measurements
-in [design decisions 15, 17 and 19](docs/DESIGN-DECISIONS.md).
+is what made raising the timeout safe.
+
+Both are recorded with their measurements, and the entry trail is worth reading
+in order — the reason for the narrow pool **expired and was replaced** rather
+than being quietly kept:
+
+- [**15** — read pool cut to 2 and the timeout set to 8 s, with a measured cost](docs/DESIGN-DECISIONS.md#15-read-pool-cut-to-2-and-the-read-timeout-set-to-8-s--with-a-measured-cost)
+- [**17** — the pool stays at 2, but entry 15's reason for it has expired](docs/DESIGN-DECISIONS.md#17-the-read-pool-stays-at-2--but-entry-15s-reason-for-it-has-expired)
+- [**19** — the pool stays at 2, with the measurement entry 17 said it lacked](docs/DESIGN-DECISIONS.md#19-the-read-pool-stays-at-2--with-the-measurement-entry-17-said-it-lacked)
 
 > The code *defaults* differ (`QUERY_POOL_SIZE` 8, `QUERY_STATEMENT_TIMEOUT_MS`
 > 10000). `docker-compose.yml` is what ships, and it overrides both.
@@ -565,51 +752,85 @@ in [design decisions 15, 17 and 19](docs/DESIGN-DECISIONS.md).
 
 ## Database design
 
+> Two tables, and every column in them is a decision. The full provenance —
+> where the shape came from, how it changed across four migrations, and what
+> normal form it is in — is in **[docs/SCHEMA.md](docs/SCHEMA.md)**.
+
+### The raw table
+
 ```sql
+-- Effective state after migrations 001-004.
 CREATE TABLE logs (
-  timestamp  TIMESTAMPTZ NOT NULL,
-  id         BIGINT GENERATED ALWAYS AS IDENTITY,
-  level      TEXT NOT NULL CHECK (level IN ('debug','info','warn','error')),
-  service    TEXT NOT NULL CHECK (length(service) > 0),
-  message    TEXT NOT NULL CHECK (length(message) > 0),
-  attributes JSONB NOT NULL DEFAULT '{}'::jsonb
-             CHECK (jsonb_typeof(attributes) = 'object'),
-  PRIMARY KEY (timestamp, id)
+  timestamp   TIMESTAMPTZ NOT NULL,
+  id          BIGINT GENERATED ALWAYS AS IDENTITY,
+  level       TEXT NOT NULL CHECK (level IN ('debug','info','warn','error')),
+  service     TEXT NOT NULL CHECK (length(service) > 0),
+  message     TEXT NOT NULL CHECK (length(message) > 0),
+  attributes  JSONB NOT NULL DEFAULT '{}'::jsonb
+              CHECK (jsonb_typeof(attributes) = 'object'),
+  ingested_at TIMESTAMPTZ DEFAULT clock_timestamp(),
+  PRIMARY KEY (timestamp, id),
+  CONSTRAINT logs_service_length_chk CHECK (length(service) <= 255)   NOT VALID,
+  CONSTRAINT logs_message_length_chk CHECK (length(message) <= 65536) NOT VALID
 ) PARTITION BY RANGE (timestamp);
 ```
 
-**Why `BIGINT` identity, not UUID.** Monotonic keys give B-tree insertion
-locality: new rows land at the right edge of the index, pages stay dense, and
-write amplification stays low. Random UUID keys fragment pages and inflate
-write amplification across every index. The id is rendered as a JSON *string*
-in responses so no precision is lost in JavaScript.
+| Column | Choice | Why |
+| --- | --- | --- |
+| `id` | `BIGINT` identity, **not UUID** | Monotonic keys land at the **right edge** of the B-tree, so pages stay dense and write amplification stays low. Random UUIDs fragment pages across *every* index. Rendered as a JSON **string** so JavaScript loses no precision |
+| `timestamp` + `id` | Composite primary key | **It *is* the pagination index** — see below |
+| `level` | `TEXT` + `CHECK` | A fixed four-value domain, enforced inline rather than by a lookup table and join |
+| `attributes` | `JSONB`, original types | A response returns `3` and `true`, not `"3"` and `"true"` |
+| `ingested_at` | Separate from `timestamp` | Client event time and server ingest time are **two different facts**; keeping both is what makes ingest lag measurable |
 
-**Why `(timestamp, id)` is the primary key.** It *is* the pagination index. A
-backward scan over it serves `ORDER BY timestamp DESC, id DESC` with no sort
-node — which is what makes the keyset walk cheap — and the `id` tiebreaker
-gives deterministic ordering when many rows share a timestamp, which the
-specification requires.
+**Why `(timestamp, id)` is the primary key.** It is not the row's identity —
+it is the **access path**. A backward scan over it serves
+`ORDER BY timestamp DESC, id DESC` with **no sort node**, which is what makes
+the keyset walk cheap, and the `id` tiebreaker keeps ordering deterministic when
+many rows share a timestamp. Partitioning also *requires* the partition key to
+appear in the primary key, so `timestamp` is not optional here.
 
-**Why range partitioning, monthly.** Retention becomes a partition `DROP`
-instead of a mass `DELETE`: no table bloat, no long locks, no vacuum storm.
-Monthly granularity keeps the partition count low, so an unfiltered descending
-page merge-append scans a handful of children rather than dozens. At startup
-the full retention window plus a forward margin is pre-created, ahead of
-traffic and never from a concurrent insert path; a `DEFAULT` partition exists
-only as a safety net and is treated as a defect when non-empty (it escapes
-pruning and retention, so retention sweeps it too).
+### Partitioning: one logical table, many physical ones
 
-**Attribute storage strategy and its trade-offs.** Attributes are stored as
-`JSONB`, values kept in their original type — a response returns `3` and
-`true`, not `"3"` and `"true"`. `attr.<key>` equality is a documented **text**
-comparison (`attributes ->> key = $n`), which is correct and parameterised
-without any general attribute index. The trade-offs are explicit: attributes
-must be flat (no nesting), JSONB costs storage overhead on top of the raw
-values, and only the configured hot keys (see [Indexes](#indexes)) get index
-support — filtering on an arbitrary key is a scan, not an indexed lookup. That
-is a deliberate budget decision, not an oversight.
+```
+                    logs           ← what you query
+                      │              PARTITION BY RANGE (timestamp)
+      ┌───────────┬───┴───────┬───────────┬──────────────┐
+      ▼           ▼           ▼           ▼              ▼
+ logs_2026_06  logs_2026_07  logs_2026_08  logs_2026_09  logs_default
+   (expired)                  (current)   (pre-created)   safety net
+```
 
-**Rollup.** A minute-granularity table answers aggregate queries:
+PostgreSQL routes each row into a child table by its `timestamp`, and stitches
+them back together on read.
+
+| | |
+| --- | --- |
+| **What it buys** | Retention becomes `DROP TABLE logs_2026_06` — an instant catalog operation — instead of a mass `DELETE` that writes WAL in proportion to every row removed and leaves millions of dead tuples for vacuum |
+| **Plus** | **Partition pruning**: a query with a `timestamp` predicate never opens the children that cannot match |
+| **Why monthly, not daily** | An unfiltered newest-first page must merge-append across *every* surviving child. Six monthly children is a cheap merge; ninety daily ones is not |
+| **What it costs** | Every unique constraint must contain the partition key — which is why `id` alone **cannot** be declared unique |
+
+Partitions are pre-created at startup — the retention window plus a forward
+margin — never from a concurrent insert path, which would risk races and
+deadlocks. A `DEFAULT` partition exists **only as a safety net** and a non-empty
+one is treated as a defect: rows landing there escape both pruning and the
+monthly drop, so retention sweeps it row-wise as well.
+
+### Attributes: what you get, and what you give up
+
+| | |
+| --- | --- |
+| **Stored as** | `JSONB`, values in their original type |
+| **Filtered by** | `attributes ->> key = $n` — a **text** comparison, parameterised, with the key as a bound value and never interpolated |
+| **Indexed by** | A `jsonb_path_ops` GIN for containment, then an exact recheck — see [Indexes](#indexes) |
+| **Give up** | Attributes must be **flat** (no nesting) · JSONB costs storage on top of the raw values · filtering an *unconfigured* key is a scan, not an indexed lookup |
+
+That last line is a deliberate index-budget decision, not an oversight: an index
+per attribute key would be paid on every inserted row, on the write path that
+owns 71% of database time.
+
+### The rollup table
 
 ```sql
 CREATE TABLE logs_agg_1m (
@@ -621,15 +842,73 @@ CREATE TABLE logs_agg_1m (
 );
 ```
 
-Deltas are aggregated in memory per flushed batch, upserted key-sorted (giving
-concurrent transactions a consistent lock order), in the **same transaction**
-as the raw rows. Counts are `BIGINT` throughout — a 32-bit cast is an overflow
-risk at retention scale. Minute granularity re-buckets cleanly into `5m`, `1h`,
-and `1d`. When `since`/`until` are not aligned to a minute boundary, the
-rollup interior is combined with **exact raw slices for the partial edge
-minutes** — a whole edge minute is never counted into a range that does not
-contain it. When `q` or any `attr.<key>` filter is present, the raw table
-answers, because those dimensions do not exist in the rollup.
+Deltas are aggregated in memory per flushed batch and upserted **key-sorted**
+(so concurrent transactions take locks in a consistent order) inside the **same
+transaction** as the raw rows — which is what makes committed counts and
+committed rows inseparable. Counts are `BIGINT` throughout, because a 32-bit
+cast overflows at retention scale.
+
+#### How an unaligned range is answered exactly
+
+The rollup stores **one row per whole minute** — nothing finer. So when a query
+range does not start and end on minute boundaries, the rollup **alone** gives a
+wrong answer.
+
+Take a request for `09:00:30` → `09:03:20`, against these rollup rows
+*(numbers below are illustrative, not measured)*:
+
+| rollup row | covers | count |
+| --- | --- | ---: |
+| `09:00` | 09:00:00 – 09:01:00 | 900 |
+| `09:01` | 09:01:00 – 09:02:00 | 880 |
+| `09:02` | 09:02:00 – 09:03:00 | 910 |
+| `09:03` | 09:03:00 – 09:04:00 | 870 |
+
+Summing all four gives **3,560 — and that is wrong.** It counts 09:00:00–09:00:29
+and 09:03:20–09:03:59, which the caller never asked for. Each of those is a
+*whole* minute being counted into a range that contains only part of it.
+
+So the range is split into three spans, each answered by whichever source can
+answer it **correctly**:
+
+```
+      09:00:30                                                  09:03:20
+         ┃━━━━━━━━━┃━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┃━━━━━━━━━┃
+         ╰── raw ──╯╰───────────  rollup  ───────────────╯╰── raw ──╯
+          30 s of        09:01 (880) + 09:02 (910)          20 s of
+          raw rows              =  1,790                    raw rows
+            = 450                                             = 290
+```
+
+**450 + 1,790 + 290 = 2,530.** Exact.
+
+That is what *"tile with no gap and no overlap"* means: the three spans cover
+the range precisely. The left edge stops exactly where the interior starts, the
+interior stops exactly where the right edge starts — **no row is counted twice,
+and none is missed.**
+
+**Why bother.** Over a 24-hour range the interior is ~1,438 rollup rows instead
+of a scan over millions of raw ones, while each edge is at most 60 seconds of
+raw rows. The rollup's speed, with the raw table's exactness.
+
+> **Not to be confused with `bucket`.** The `bucket` parameter shapes the
+> *answer* — `bucket=1h` returns one row per hour. The interior/edge split is
+> invisible to the caller; it is only how each number is computed. Minute
+> granularity re-buckets cleanly into `5m`, `1h` and `1d` because each is a
+> whole multiple of a minute.
+
+#### Why `q` and `attr.<key>` bypass the rollup entirely
+
+Look at what the rollup actually keeps: `bucket_start`, `service`, `level`,
+`count`. **There is no `message` column and no `attributes` column.**
+
+So `q=timeout` or `attr.region=eu-west` is not *slow* against the rollup — it is
+**impossible**. Summarising threw that detail away. When either filter is
+present the whole query goes to the raw table, where the message text and the
+attributes still exist.
+
+That is the trade a rollup makes: **it is fast because it stores less, and it
+can only answer questions about the dimensions it kept.**
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -637,129 +916,170 @@ answers, because those dimensions do not exist in the rollup.
 
 ## Indexes
 
-Every shipped index exists to serve a named access pattern; the ingestion cost
-of each is accepted deliberately.
+Every index here is a trade: read speed bought with write cost, on a write path
+that owns **71% of database time**. Each one below states what it serves and
+what it costs, and two of them were **removed or never built** because the trade
+did not pay.
 
-### Primary key `(timestamp, id)`
+| Index | Status | Serves | Ingest cost |
+| --- | --- | --- | --- |
+| `logs_pkey (timestamp, id)` | 🟢 **ships** | The cursor page | One B-tree insert per row, appended at the right edge |
+| `logs_attributes_gin_idx` | 🟢 **ships** | Equality on **any** attribute key | ~4.5% of throughput |
+| `logs_agg_1m` PK + service index | 🟢 **ships** | Rollup reads | Negligible — orders of magnitude fewer rows |
+| `logs_attr_<key>_page_idx` | ⚪ **off by default** | Hot-key lookups **in cursor order** | Scales with how often the key appears |
+| `logs_service_level_page_idx` | 🔴 **removed** 2026-08-18 | Service/level filtered pages | Was 116 MB maintained for **zero scans** |
+| `pg_trgm` on `message` | 🔴 **never built** | Substring search | Would inflate an already-large footprint |
 
-Serves: the cursor page — a backward scan returns `ORDER BY timestamp DESC,
-id DESC` with **no sort node**, and the `id` tiebreaker makes tied-timestamp
-ordering deterministic. `EXPLAIN (ANALYZE, BUFFERS)` on the 1,000-row page
-shows a `Limit` over a `Merge Append` of backward index scans across
-partitions, 34 shared-buffer hits, no sort — 1.6 ms of PostgreSQL-side
-execution.
+---
 
-Ingestion cost: one B-tree insert per row per partition. Because the id is a
-monotonic identity, inserts append to the right edge of the index.
+### 🟢 Primary key `(timestamp, id)`
 
-### `logs_service_level_page_idx` — removed 2026-08-18, and why
+| | |
+| --- | --- |
+| **Serves** | The cursor page. A backward scan returns `ORDER BY timestamp DESC, id DESC` with **no sort node**, and the `id` tiebreaker makes tied-timestamp ordering deterministic |
+| **Measured** | `EXPLAIN (ANALYZE, BUFFERS)` on a 1,000-row page: a `Limit` over a `Merge Append` of backward index scans across partitions — **34 shared-buffer hits, no sort, 1.6 ms** |
+| **Costs** | One B-tree insert per row per partition. The id is a monotonic identity, so inserts **append to the right edge** rather than scattering |
 
-This index — `(service, level, timestamp DESC, id DESC)` — was declared in
-migration `001` to make `service`/`level` filters free, and dropped in
-migration `004` after being measured. It is documented here rather than
-deleted because the reasoning is the useful part.
+### 🟢 `logs_attributes_gin_idx` — `gin (attributes jsonb_path_ops)`, `fastupdate = off`
 
-It cost a second B-tree update per ingested row, and it was not being used:
-the profile in `docs/test_results/postgres-profile.md` recorded **zero scans**
-against 116 MB, with `EXPLAIN` showing the page query served by backward
-primary-key scans instead.
+| | |
+| --- | --- |
+| **Serves** | Equality on *any* attribute key, with no advance configuration |
+| **Measured** | Without it, one lookup at 671k rows read **every row in 158 ms**. With it, **0.4 ms** — a 414× improvement |
+| **Costs** | ~**4.5%** of ingest throughput (16,525 vs 17,305 logs/s) |
 
-The question that decided it was **not** the write saving but the read cost.
-Measured against the query shape the index exists for — a service-filtered
-cursor walk — dropping it changed nothing: 12.6–13.1 pages/s before against
-12.4–14.4 after, page p50 26.6–34.7 ms against 21.7–30.4 ms, every band
-overlapping. At a 96.2% buffer hit ratio, a backward primary-key scan that
-discards three rows in four is cheaper than maintaining a fourth B-tree.
+Without an index, `attr.k=v` fell back to walking the table in cursor order —
+bounded only by table size, and paid on a **hit** as much as a miss, because a
+selective filter with a small limit finds its row immediately and then keeps
+scanning to decide whether a next page exists.
 
-Removing it bought −18% WAL per row and +12.4% / +25.1% ingest throughput at
-batch 33 / 200. Full evidence: `docs/test_results/index-removal.md`.
+> **`fastupdate = off` is what makes the trade work.** Left on (the default),
+> new entries queue in an unsorted pending list that *every* read must scan end
+> to end — so a read-after-write client pays for the writes it is racing. On the
+> mixed workload that cost **more than half** the achievable throughput: 6.3k
+> logs/s at 83% database CPU with it on, **10.5k at 41%** with it off.
 
-**This is workload-specific, not a general rule.** It rests on the read set
-being RAM-resident, which is what makes the discarded rows cheap. A deployment
-that pages heavily by service over a table much larger than memory should
-re-measure before inheriting the conclusion — and the contrasting result from
-the same session is the attribute GIN, which was kept because dropping it made
-a selective attribute lookup 42.7× slower.
+<details>
+<summary><b>How the query actually reaches this index</b> — and why both halves of the predicate are required</summary>
 
-### `logs_attr_<key>_page_idx` — hot attribute, partial
+<br>
 
-```
+`jsonb_path_ops` answers **containment only**, so `buildPredicates` narrows with
+a containment disjunction and then rechecks the exact `->>` equality. Neither
+half is optional:
+
+- Containment is **broader** than `->>` for numbers, because jsonb compares
+  numerics rather than their text. `@> '{"k":1.0}'` matches a stored `1`, which
+  `->>` renders as `'1'` and must **not** match a query for `'1.0'`.
+- Containment is **narrower** for whichever JSON type it names — which is why a
+  filter value that could have been stored as a string, a number *or* a boolean
+  gets **one containment term per type**.
+
+Their union is a superset of `->>` equality, so ANDing the exact predicate back
+on reproduces the original semantics precisely while letting the index do the
+selection.
+
+</details>
+
+### 🟢 Rollup indexes
+
+`logs_agg_1m`'s primary key `(bucket_start, service, level)` serves the
+rollup-range scan; `logs_agg_service_bucket_idx (service, bucket_start, level)`
+serves rollup reads narrowed by service. These tables hold one row per
+(minute, service, level) combination — **orders of magnitude smaller than raw**,
+so their write cost is negligible next to the raw indexes.
+
+### ⚪ `logs_attr_<key>_page_idx` — hot attribute, partial, **off by default**
+
+```sql
 CREATE INDEX logs_attr_trace_id_page_idx
   ON logs ((attributes ->> 'trace_id'), timestamp DESC, id DESC)
   WHERE attributes ? 'trace_id';
 ```
 
-Serves: correlation-ID style lookups (`attr.trace_id=…`) that must also come
-back in cursor order — one equality probe, one index scan, no sort.
+| | |
+| --- | --- |
+| **Serves** | Correlation-ID lookups (`attr.trace_id=…`) that must return **in cursor order** — one equality probe, one index scan, no sort |
+| **Why partial** | `WHERE attributes ? key` means rows without the key are **not indexed at all**, so write cost scales with how often the key appears, not with total ingest volume |
+| **Why configurable** | Created at startup from `HOT_ATTRIBUTE_KEYS`, not in a migration — *which* attribute deserves an index is a **deployment** decision, not a schema constant |
+| **Why off** | The cost is still real: a JSONB extraction and a scattered B-tree write for every row carrying the key. Compose ships `HOT_ATTRIBUTE_KEYS=` **empty** |
 
-Why partial and configurable: the index is created at startup from
-`HOT_ATTRIBUTE_KEYS` rather than in the SQL migration, because *which*
-attribute deserves an index is a deployment decision, not a schema constant.
-The `WHERE attributes ? key` predicate means rows without the key are not
-indexed at all, so the write cost scales with how often the key actually
-appears, not with total ingest volume. That cost is still real — a JSONB
-extraction and a scattered B-tree write for every row carrying the key — so
-compose ships `HOT_ATTRIBUTE_KEYS=` empty and adds no attribute index by
-default; turn one on where the read path actually filters on that key. The
-planner only
-considers this index when the configured key is emitted as a literal — which
-is safe because config validation restricts keys to the identifier character
-set; the compared *value* is always a bound parameter.
+Turn one on where the read path actually filters on that key. The planner only
+considers this index when the configured key is emitted as a **literal** — safe
+because config validation restricts keys to the identifier character set, and
+the compared *value* is always a bound parameter.
 
-### `logs_attributes_gin_idx` — `gin (attributes jsonb_path_ops)`, `fastupdate = off`
+---
 
-Serves: an equality filter on *any* attribute key, without that key having to
-be configured in advance.
+### 🔴 `logs_service_level_page_idx` — removed 2026-08-18
 
-Why it exists: without it, `attr.k=v` had no index to use and fell back to
-walking the table in cursor order. That is bounded only by the table size, and
-it is paid on a **hit** as much as a miss — a selective filter with a small
-limit finds its row immediately and then keeps scanning to decide whether a
-next page exists. Measured at 671k rows, one such lookup read every row in
-158 ms; with the index it is 0.4 ms.
+`(service, level, timestamp DESC, id DESC)`, declared in migration `001` to make
+`service`/`level` filters free, dropped in migration `004` after measurement.
+**Documented rather than deleted, because the reasoning is the useful part.**
 
-How the query reaches it: `jsonb_path_ops` answers containment only, so
-`buildPredicates` narrows with a containment disjunction and then rechecks the
-exact `->>` equality. Both halves are load-bearing — containment is *broader*
-than `->>` for numbers, because jsonb compares numerics rather than their text
-(`@> '{"k":1.0}'` matches a stored `1`, which `->>` renders as `'1'` and must
-not match a query for `'1.0'`), and it is *narrower* for whichever JSON type it
-names, which is why a filter value that could have been stored as a string, a
-number or a boolean gets one containment term per type.
+**The profile found it at 116 MB taking zero scans**, with `EXPLAIN` showing the
+page query served by backward primary-key scans instead — while it still cost a
+second B-tree update on every ingested row.
 
-Ingestion cost: about 4.5% of throughput (16,525 vs 17,305 logs/s measured).
-`fastupdate = off` is what makes that trade work: left on, new entries queue in
-an unsorted pending list that *every* read has to scan end to end, so a
-read-after-write client pays for the writes it is racing. On the mixed
-workload that cost more than half the achievable throughput — 6.3k logs/s at
-83% database CPU with it on, 10.5k at 41% with it off.
+**But the write saving is not what decided it.** The question was the *read*
+cost, measured against the query shape the index exists for:
 
-### Rollup indexes
+| Service-filtered cursor walk | Before | After | |
+| --- | --- | --- | --- |
+| pages/s | 12.6–13.1 | 12.4–14.4 | **overlapping** |
+| page p50 | 26.6–34.7 ms | 21.7–30.4 ms | **overlapping** |
 
-`logs_agg_1m`'s primary key `(bucket_start, service, level)` serves the
-rollup-range scan, and `logs_agg_service_bucket_idx
-(service, bucket_start, level)` serves rollup reads narrowed by service. These
-tables grow one row per (minute, service, level) combination — orders of
-magnitude smaller than raw, so their write cost is negligible next to the raw
-indexes.
+Nothing regressed. At a 96.2% buffer hit ratio a backward primary-key scan that
+**discards three rows in four** is cheaper than maintaining a fourth B-tree.
+Removing it bought **−18% WAL per row** and **+12.4% / +25.1%** ingest
+throughput at batch 33 / 200.
 
-### Deliberately not shipped
+> **This is workload-specific, not a general rule.** It rests on the read set
+> being RAM-resident, which is what makes the discarded rows cheap. A deployment
+> paging heavily by service over a table much larger than memory should
+> **re-measure** before inheriting the conclusion.
 
-- ~~**A general GIN index on `attributes`.**~~ **Reversed by measurement.**
-  The argument was that it would tax every insert to accelerate filters that
-  are rare, leaving arbitrary `attr.<key>` equality as a documented scan. Two
-  things were wrong with it. The scan is not rare when any client does
-  read-after-write, and it is not cheap on a hit either — the `limit + 1`
-  probe keeps scanning past the matched row to decide whether a next page
-  exists, so a lookup that returns one row still reads the whole table. And
-  the tax was assumed rather than measured: it is about 4.5% of ingest
-  throughput, against a 414× improvement on the lookup. It is now shipped as
-  `logs_attributes_gin_idx`, with `fastupdate = off`, which is where the real
-  cost of a GIN index on this workload turned out to live.
-- **`pg_trgm` on `message`.** `q` is a literal, case-insensitive substring
-  match (`strpos`) — correct, parameterised, and wildcard-free. A trigram
-  index would materially inflate an index footprint already measured at over
-  half the table size, to accelerate a filter that is not the hot path.
+The contrast from the same session is the attribute GIN, which looked identical
+in the profile — also zero scans — and was **kept**, because dropping it made a
+selective attribute lookup **42.7× slower**. Two indexes that looked the same
+priced out oppositely, and only measuring each against its own query shape
+revealed it. Full evidence:
+[`index-removal.md`](docs/test_results/index-removal.md).
+
+### 🔴 Never built
+
+<details>
+<summary><b>A general GIN on <code>attributes</code></b> — proposed as "not worth it", then <b>reversed by measurement</b></summary>
+
+<br>
+
+The original argument was that it would tax every insert to accelerate filters
+that are rare, leaving arbitrary `attr.<key>` equality as a documented scan.
+**Two things were wrong with it:**
+
+1. **The scan is not rare** — any client doing read-after-write hits it — and it
+   is **not cheap on a hit** either, because the `limit + 1` probe keeps scanning
+   past the matched row to decide whether a next page exists. A lookup returning
+   one row still read the whole table.
+2. **The tax was assumed, not measured.** It is ~4.5% of ingest throughput,
+   against a **414×** improvement on the lookup.
+
+It now ships as `logs_attributes_gin_idx` with `fastupdate = off` — which is
+where the real cost of a GIN on this workload turned out to live.
+
+</details>
+
+<details>
+<summary><b><code>pg_trgm</code> on <code>message</code></b> — for substring search</summary>
+
+<br>
+
+`q` is a literal, case-insensitive substring match via `strpos` — correct,
+parameterised and wildcard-free. A trigram index would materially inflate an
+index footprint **already measured at over half the table size**, to accelerate
+a filter that is not the hot path.
+
+</details>
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
@@ -851,15 +1171,78 @@ database configuration.
 
 ## Performance
 
+**The current numbers are in [docs/RESULTS.md](docs/RESULTS.md#1-six-consecutive-runs-of-the-official-cli).** This section
+keeps the historical record — the measurements that produced the design, and the
+defects they exposed.
+
+### Where it stands now
+
+Six consecutive runs of the official benchmark CLI, the project's measurement of
+record:
+
+| | Result |
+| --- | --- |
+| Total | **95.68** mean, **96.11** best (maximum 100) |
+| Ingest throughput, load scenario | **14,999 logs/s** at **0.000% errors** — identical in all six runs |
+| Correctness | **15 / 15**, zero variance |
+| Reliability | **20 / 20**, zero variance |
+| Request latency p95 | 191 – 272 ms |
+| Aggregate latency p95 | 20 – 64 ms |
+| Limited by | **the load generator, not the service** — `serviceLimited: false` in every scenario of every run |
+
+Measured on a host reporting **0.12× reference speed**, so these are figures from
+a deliberately slow machine. Full detail, including the six-build regression
+series and [what the numbers do *not* establish](docs/RESULTS.md#16-what-is-deliberately-not-claimed):
+**[docs/RESULTS.md](docs/RESULTS.md#1-six-consecutive-runs-of-the-official-cli)**.
+
+### Defects found by measurement
+
+The most durable output of the performance work is not a throughput figure — it
+is this list. Each was found by a harness, not by reading code.
+
+| # | Finding | Outcome |
+| ---: | --- | --- |
+| 1 | **Cursor ordering defect.** An unqualified `ORDER BY id` resolved against the `id::text` output alias, sorting lexicographically while the keyset predicate compared `id` as `bigint`. Rows sharing a timestamp were **silently skipped mid-walk** while the response reported a clean `next_cursor` | ✅ **Fixed** — 18 ordering violations before, 0 after. Both sort columns are now table-qualified, with a comment saying why they must stay that way |
+| 2 | **Crash loop on database loss.** Startup database work ran at import time, so an unreachable PostgreSQL rejected the bootstrap and the restart policy returned the process to the same failing state | ✅ **Fixed** — bounded-backoff retry, and outages map to `503` + `Retry-After` instead of killing the process. The failure drill asserts the container does not restart |
+| 3 | **A database outage returned `500` on some hosts.** The classifier matched `ENOTFOUND` but not `EAI_AGAIN` — and *which* arrives depends on the **resolver**, not the fault. It survived because the single decision point behind every `503` had **no unit test at all** | ✅ **Fixed** — the whole `getaddrinfo` family is classified as unavailable, with the regression tests it never had ([`test/unit/pools.test.ts`](test/unit/pools.test.ts)) |
+| 4 | **Unaligned aggregate ranges** fell back to a full raw scan | ✅ **Fixed, then refined** — rollup interior plus exact raw edge slices; see [Database design](#database-design) |
+| 5 | **PostgreSQL-side JSON building.** One jsonb per row inside PostgreSQL plus a direct response write | ❌ **Tried, measured slower, reverted** — 57.5 vs 85.0 pages/s. Construction on the single database CPU cost more than the app's serialisation under its own cap |
+| 6 | **Page latency** — 16.1 ms p95 here, 87.3 ms on Linux, against ~1.7 ms of database-side execution. Attributable to app-side materialisation: the container ran at ~89% of its cap while PostgreSQL idled at 23% | ⏭️ **Superseded** by the read-path work — [request p95 fell to 8.18 ms](docs/RESULTS.md#5-the-final-submission-in-detail) |
+| 7 | **Aggregate tail latency** — fast in standalone `EXPLAIN`, but 101 ms concurrent p95 here and 562 ms on Linux, falling to 90 ms when the app cap was raised. App-side contention, not plan selection | ⏭️ **Superseded** by the in-process aggregate counters — [aggregate p95 fell to 1.00 ms](docs/RESULTS.md#5-the-final-submission-in-detail) |
+
+Item 3 is the one worth remembering: **a classifier with no test, sitting behind
+every `503` the service can emit.** It behaved correctly on the development
+machine and incorrectly on hosts whose DNS answered `SERVFAIL` instead of
+`NXDOMAIN`, for the identical outage.
+
+**Freshness is now measured** — see [Known limitations](#known-limitations) and
+[docs/test_results/linux-verification-results.md](docs/test_results/linux-verification-results.md) §6. The
+structural argument that a `200` follows commit is confirmed numerically: 3,821
+of 3,821 probes found their row on the first attempt, and the measured delay
+distribution is indistinguishable from the latency of the query doing the
+looking.
+
+---
+
+### Historical measurement record
+
+> **Superseded — read the caveats before quoting anything here.** The three
+> blocks below are kept because they are an accurate record of the
+> configurations they measured, and because two of their conclusions were
+> **refuted by later runs**. They are *not* a description of what ships.
+
+<details>
+<summary><b>Phase 5 capture</b> — the original full measurement, and why it no longer describes what ships</summary>
+
+<br>
+
 > **These Phase 5 figures predate the current write and attribute-query
 > configuration.** Since they were captured, the flush policy changed from a
 > 2,000-row cap to a full-queue drain, `wal_compression` was dropped, the
 > `trace_id` hot-attribute index was removed from the shipped compose, and a
 > `jsonb_path_ops` GIN index on `attributes` was added. They are retained as an
 > accurate record of the configuration they measured; they are no longer a
-> description of what ships. The [reconfiguration results](#reconfiguration-results)
-> below carry the current numbers, and are held to a lower evidentiary standard —
-> read both sections' caveats before quoting either.
+> description of what ships.
 
 **The figures below are transcribed from `bench/results/final.md`
 (Phase 5).** The shipped scripts emit the same kinds of metrics, but the exact
@@ -867,7 +1250,7 @@ ingestion and drain console summaries behind this table were not retained in
 `bench/raw/`. The retained raw files support the storage and buffer fields; the
 resource CSV combines multiple capture attempts and is not a clean sampling
 window. Current measurements, taken to the standard described there, are in
-[docs/RESULTS.md](docs/RESULTS.md). The
+[docs/RESULTS.md](docs/RESULTS.md#1-six-consecutive-runs-of-the-official-cli). The
 measurement ran on the accumulated database (3,001,180 rows at walk time) —
 larger than any clean re-ingestion would produce, so the recorded read-path
 case is harder than a smaller clean dataset.
@@ -878,7 +1261,7 @@ Windows 11 host with the load generator on the host. Port 8080 was occupied on
 the development machine, so every measurement used `HOST_PORT=8081`; the
 shipped default remains 8080.
 
-**Dataset.** Generated by `scripts/benchmark.mjs` — 3,001,180 rows at walk
+**Dataset.** Generated by [`scripts/benchmark.mjs`](scripts/benchmark.mjs) — 3,001,180 rows at walk
 time.
 
 **Batch / page sizes.** Ingestion at batch size 200; the drain walks
@@ -886,12 +1269,12 @@ time.
 
 **Methodology.** Ingestion: fixed 30-second window, 64 concurrent workers,
 with a concurrent aggregate probe every second. Drain:
-`scripts/drain.mjs` walks `GET /logs` sequentially by cursor to the true end
+[`scripts/drain.mjs`](scripts/drain.mjs) walks `GET /logs` sequentially by cursor to the true end
 and reports pages/s, rows/s and per-page percentiles — and it **fails the run**
 on duplicates, ordering violations, or a unique-row count that does not match
 `EXPECT_TOTAL`. Page-query cost:
 `EXPLAIN (ANALYZE, BUFFERS)` against the live database (`docs/explain/`).
-Resources: `scripts/capture-resources.mjs` samples both containers concurrently
+Resources: [`scripts/capture-resources.mjs`](scripts/capture-resources.mjs) samples both containers concurrently
 during the load window and records the actual elapsed time and sample count.
 Every raw-output path is create-only, so repeating a run name fails instead of
 silently concatenating or overwriting evidence.
@@ -941,67 +1324,12 @@ app-side materialisation, JSON serialisation, the HTTP write inside the
 0.5-CPU application, plus host→container overhead. The experiment queue
 attacked exactly this gap; the record is in `bench/results/experiments.md`.
 
-**Bottlenecks found and optimisations applied:**
+</details>
 
-1. **Cursor ordering defect (fixed).** An unqualified `ORDER BY id` resolved
-   against the `id::text` output alias, sorting lexicographically while the
-   keyset predicate compared `id` as `bigint` — rows sharing a timestamp were
-   silently skipped mid-walk while the response reported a clean
-   `next_cursor`, and the plan lost its pure index scan. The drain harness
-   measured **18 ordering violations before, 0 after**; this historical figure
-   is recorded in `plan/HANDOFF.md` and has no retained raw capture. Both sort
-   columns are now table-qualified, with a comment in the query explaining why
-   they must stay that way.
-2. **Crash loop on database loss (fixed).** Startup database work ran at
-   import time, so an unreachable PostgreSQL rejected the bootstrap and the
-   restart policy returned the process to the same failing state. Startup now
-   retries with bounded backoff, and a connection-loss classifier maps
-   outages to `503` + `Retry-After` on every endpoint instead of killing the
-   process — the failure drill asserts the container does not restart.
-3. **A database outage returned `500` on some hosts (fixed).** That
-   connection-loss classifier matched `ENOTFOUND` but not `EAI_AGAIN`. Which
-   code arrives depends on the *resolver*, not on the fault: a container
-   runtime whose embedded DNS answers `NXDOMAIN` for a stopped service gives
-   `ENOTFOUND`, while one answering `SERVFAIL` gives `EAI_AGAIN` for the
-   identical outage. On hosts in the second group, `GET /logs`,
-   `GET /logs/aggregate` and `POST /logs` returned `500` with no `Retry-After`
-   during an outage, and `withDatabaseRetry` would not retry a resolver blip at
-   startup. The whole `getaddrinfo` family is now classified as unavailable.
-   The defect survived because the classifier had no unit test at all despite
-   being the single decision point behind every `503`; it now has one
-   (`test/unit/pools.test.ts`), including the case that a client's own mistake
-   — a syntax error, a constraint violation, a fired `statement_timeout` — must
-   never be reported as the database being down.
-4. **Unaligned aggregate ranges (fixed, then refined).** Aggregate queries
-   whose `since`/`until` are not minute-aligned now answer from the rollup
-   interior plus exact raw slices for the partial edge minutes, instead of a
-   full raw scan; sub-millisecond digits past a minute boundary are handled
-   exactly. Whole edge minutes are never counted into a range that does not
-   contain them.
-5. **PostgreSQL-side JSON (tried, lost, reverted).** Building one jsonb per
-   row inside PostgreSQL plus a direct response write made the drain slower
-   (57.5 vs 85.0 pages/s) — jsonb construction on the single PostgreSQL CPU
-   cost more than the app's serialisation under its own cap. Recorded as a
-   measured loss in `bench/results/experiments.md`, not kept.
-6. **Open bottleneck (page latency).** 16.1 ms p95 here, 87.3 ms on the Linux
-   host, against ~1.7 ms of database-side execution. Now attributable: the
-   drain is application-CPU-bound, with the container at ~89% of its cap while
-   PostgreSQL idles at 23%. Raising the cap to 2.0 CPU improves page p95 to
-   39.0 ms — still 4.9× the 8 ms budget, so the cap is not the whole story.
-7. **Open bottleneck (aggregate tail latency).** The rollup plan is fast in its
-   standalone EXPLAIN capture, but concurrent end-to-end aggregate p95 is
-   101 ms here and 562 ms on the Linux host. It falls to 90 ms when the
-   application cap is raised, so the tail is app-side contention rather than
-   plan selection.
+<details>
+<summary><b>Reconfiguration results</b> — a change record, explicitly the weakest evidence on this page</summary>
 
-**Freshness is now measured** — see [Known limitations](#known-limitations) and
-[docs/test_results/linux-verification-results.md](docs/test_results/linux-verification-results.md) §6. The
-structural argument that a `200` follows commit is confirmed numerically: 3,821
-of 3,821 probes found their row on the first attempt, and the measured delay
-distribution is indistinguishable from the latency of the query doing the
-looking.
-
-### Reconfiguration results
+<br>
 
 **Evidentiary standard.** These runs used ad-hoc harnesses rather than the
 committed `bench/` scripts, and no raw capture was retained under `bench/raw/`.
@@ -1034,7 +1362,7 @@ batcher now drains its whole queue per flush instead of capping at 2,000 rows;
 > *is* a clean local A/B — both columns came from the same host and harness,
 > isolating the attribute-index change. Batch size is also a large confound
 > here: measured at batch 200 rather than 50, the same configuration reaches
-> 20,720 logs/s. See [Linux verification](#linux-verification) below for
+> 20,720 logs/s. See the **Linux verification** block below, and [`linux-verification-results.md`](docs/test_results/linux-verification-results.md), for
 > figures taken under one controlled protocol.
 
 The CPU inversion is the substantive result: PostgreSQL was the constraint and
@@ -1067,7 +1395,12 @@ instead of 10.5k at 41%.
 re-measured; nothing here targets the app-side materialisation cost that
 dominates them, and the open bottlenecks (5) and (6) stand as recorded.
 
-### Linux verification
+</details>
+
+<details>
+<summary><b>Linux verification</b> — two hypotheses put, and <b>both refuted</b></summary>
+
+<br>
 
 The figures above were all taken under Docker Desktop with the WSL2 backend,
 which was enough to make several conclusions unsafe. The branch was re-measured
@@ -1105,24 +1438,26 @@ sustained under the 0.5-CPU cap (below the 15,000 requirement), the drain at
 comparable across the two hosts; the missed targets are recorded as misses
 either way.
 
+</details>
+
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 
 ---
 
 ## Testing and CI
 
-- **Unit tests** (`npm test`) — `test/unit/`: entry validation (including the
+- **Unit tests** (`npm test`) — [`test/unit/`](test/unit/): entry validation (including the
   mirror-the-database cases: null characters, future timestamps, attribute
   flatness and value types), the batcher (coalescing, row/byte caps,
   backpressure rejection, shutdown draining), and the query path (parser
   strictness, cursor codec signing/filter-binding, predicate building,
   serialisation).
-- **Integration tests** (`npm run test:integration`) — `test/integration/`:
+- **Integration tests** (`npm run test:integration`) — [`test/integration/`](test/integration/):
   one test compares aligned, unaligned-edge, grouped, and raw aggregate results
   with direct SQL truth; the other seeds an expired partition, runs one
   retention cycle directly (rather than waiting for the one-hour timer), and
   asserts both raw rows and rollup counts are gone.
-- **Contract smoke** (`npm run smoke`) — `scripts/contract-smoke.mjs`, run
+- **Contract smoke** (`npm run smoke`) — [`scripts/contract-smoke.mjs`](scripts/contract-smoke.mjs), run
   against the live compose stack: health, ingestion with an invalid entry
   rejected by original index while valid siblings are accepted, an
   equal-timestamp cursor walk including a digit-boundary tie regression
@@ -1131,10 +1466,10 @@ either way.
   a tampered cursor → `400`, an all-invalid batch → `400`, malformed JSON →
   `400`.
 - **Reliability matrix** (`npm run reliability`) —
-  `scripts/reliability-check.mjs`, 73 checks: bad inputs (limits, timestamps,
+  [`scripts/reliability-check.mjs`](scripts/reliability-check.mjs), 73 checks: bad inputs (limits, timestamps,
   cursors, filter values) must produce `4xx` with the required error shape —
   never a `500`, never a crashed process.
-- **Failure drill** (`npm run drill`) — `scripts/failure-drill.sh`: stop
+- **Failure drill** (`npm run drill`) — [`scripts/failure-drill.sh`](scripts/failure-drill.sh): stop
   PostgreSQL, assert every endpoint degrades to `503` + `Retry-After`, assert
   the application container does **not** restart, and assert recovery once the
   database returns; then ingest under load, send repeated `SIGTERM`, require a
@@ -1158,80 +1493,115 @@ either way.
 
 ## Known limitations
 
-- **Page latency target not yet met.** ≤ 8 ms p95
-  per 1,000-row page is the plan target; measured at 16.1 ms p95. See
-  [Performance](#performance).
-- **The final full drain missed the internal deadline.** It reached the true
-  end with correct ordering and counts, but 3,002 pages took 34.6 seconds. At
-  the measured 86.8 pages/s, a 30-second walk reaches only about 2.604 M rows;
-  completing 3,001,180 rows required at least 100.1 pages/s.
-- **Aggregate p95 missed the internal target.** The recorded 101 ms meets the
-  specification's <1 s requirement but is not double-digit milliseconds.
-- **The final measurement ran on an accumulated database** (3 M rows) rather
-  than a freshly wiped volume; read-path numbers are therefore the harder
-  case, not the easier one. The shipped scripts can repeat the methodology,
-  but the exact final ingestion and drain outputs were not retained under
-  `bench/raw/` for independent reconstruction.
-- **Raw benchmark evidence is incomplete.** The retained resource CSV contains
-  two headers and samples from multiple attempts; the final ingestion, drain,
-  and E1+E2 console summaries are not present in `bench/raw/`. Headline figures
-  should be treated as run records until a clean recapture is retained.
+Nothing here is hidden elsewhere in this file. The list is grouped by **what it
+means for you**, because a deliberate contract constraint and an unmet
+performance target are not the same kind of thing.
+
+**If you are going to run this service, these three matter most:**
+
+| | Limitation | What to do about it |
+| --- | --- | --- |
+| ⚠️ | **The default durability profile is not crash-durable** | Set `SYNC_COMMIT=on` if you need strict durability — see below |
+| ⚠️ | **The application CPU cap is the binding constraint**, not the database | Raising it is the lever; the database has reserve |
+| ⚠️ | **`q` is a scan** on a large table | Bounded by `QUERY_STATEMENT_TIMEOUT_MS=8000`, but it is the one filter with no index |
+
+---
+
+### Durability and operations
+
+- **The default durability profile is not crash-durable.** With
+  `SYNC_COMMIT=off` (the default), an unclean PostgreSQL host failure can lose a
+  window of acknowledged writes. A `200` remains a committed-and-queryable
+  guarantee; what it does not survive is an unclean crash. **Switch to
+  `SYNC_COMMIT=on` for strict durability.** See [Durability](#durability).
+- **Retention cadence is coarse.** Boundary sweeps run hourly by default and are
+  bounded to 20 batches per pass, so a very large backlog of boundary rows
+  drains over several passes. Expired **whole partitions drop immediately**.
+- **Index footprint remains material.** The shipped configuration carries
+  **three indexes per partition**, the GIN included. Measured at 3.17 M rows,
+  `logs_attributes_gin_idx` is **131 MB of 477 MB** of index (~41 bytes/row,
+  ~13% of total `logs` size) — see [`linux-verification-results.md` §5](docs/test_results/linux-verification-results.md).
+- **Cursors do not survive a secret change.** With `CURSOR_SECRET` unset, a new
+  random secret is generated at every start and previously minted cursors are
+  rejected. Intended — but it looks like a bug in manual testing. Compose pins a
+  development secret.
+
+### Contract constraints — by design
+
+- Entries more than **five minutes in the future** are rejected.
+- Attributes must be **flat**, with string, number or boolean values.
+- Request bodies are capped at **`4mb`**.
+- **`q` is the one remaining scan-shaped filter.** A literal `strpos` substring
+  match with no trigram support — deliberate, see [Indexes](#indexes).
+  `attr.<key>` equality is *no longer* in this category: the `jsonb_path_ops`
+  GIN answers any key, and a hot key additionally buys sort-free cursor order.
+  `QUERY_STATEMENT_TIMEOUT_MS=8000` is the backstop for a `q` scan on a large
+  table.
+- **Unaligned aggregate ranges read raw edge slices.** Correct and exact, but a
+  range whose edges fall inside minutes costs two raw slice queries on top of
+  the rollup interior. `q` and `attr.*` aggregates scan raw rows by construction,
+  because those dimensions are not in the rollup — see
+  [Database design](#database-design).
+
+### Resource envelope
+
+- **The application container is the binding constraint — confirmed on native
+  Linux.** It sits at **~99%** of its 0.5-CPU cap on the write path and ~89% on
+  the read path, while PostgreSQL keeps **40–75% of its own cap in reserve**.
+  Raising only the application cap to 2.0 CPU takes ingestion from 13,922 to
+  **25,574 logs/s** and moves saturation onto PostgreSQL — which is the
+  diagnostic that settles it. Further throughput has to come from app-side cost,
+  not from the database. **This inverts the constraint the earlier tuning was
+  written against.**
+- **Whether 15,000 logs/s is met under the shipped 0.5-CPU cap depends on the
+  harness**, and both results below are real:
+
+  | Harness | Result |
+  | --- | --- |
+  | This project's own 221 s sustained run, Linux host | **14,320 logs/s**, 0 errors — **below** the requirement |
+  | The official benchmark CLI, load scenario, six runs | **14,999 logs/s** at 0.000% errors — [the measurement of record](docs/RESULTS.md#1-six-consecutive-runs-of-the-official-cli) |
+
+  Different harnesses, different durations, different offered rates. With the
+  cap raised to 2.0 CPU the same run reaches 25,574 logs/s, so this is a **cap
+  choice rather than a defect** — but under the caps as shipped, a sustained
+  221-second run on that hardware missed it.
+
+### Measurement caveats
+
+- **The Phase 5 measurement ran on an accumulated database** (3 M rows) rather
+  than a freshly wiped volume, so its read-path numbers are the **harder** case,
+  not the easier one. The shipped scripts can repeat the methodology, but the
+  exact final ingestion and drain outputs were not retained for independent
+  reconstruction.
+- **Some raw Phase 5 evidence is incomplete.** The retained resource CSV
+  contains two headers and samples from multiple attempts; the final ingestion,
+  drain and E1+E2 console summaries are not present. **Treat those headline
+  figures as run records**, not as reproducible captures.
+
+### Superseded by later work
+
+These were open when they were recorded. The read-path work that followed
+addressed all three — the numbers are kept because they are what the earlier
+configuration measured.
+
+| Recorded limitation | Then | Now |
+| --- | --- | --- |
+| Page latency vs an ≤ 8 ms p95 plan target | 16.1 ms p95 | [Superseded](docs/RESULTS.md#5-the-final-submission-in-detail) — request p95 fell to 8.18 ms |
+| Aggregate p95 vs an internal double-digit-ms target | 101 ms | [Superseded](docs/RESULTS.md#5-the-final-submission-in-detail) — aggregate p95 fell to 1.00 ms |
+| A 3,002-page drain against a 30 s window | 34.6 s at 86.8 pages/s, needing ≥ 100.1 pages/s | Not re-measured under the current configuration |
+
+### Closed by measurement
+
 - ~~**Freshness is unmeasured.**~~ **Closed.** A harness probing after every
   accepted `POST` against a warm 3.17 M-row database found the row on the
-  **first** probe 3,821 times out of 3,821, with delay p50 95 ms, p95 214 ms,
-  p99 303 ms, max 537 ms. The delay distribution and the probe's own latency
-  agree to within a fraction of a millisecond, which is the measurement
-  confirming there is no visibility lag to find: the row is already committed
-  when the `POST` is acknowledged, and the "delay" is just the cost of the
-  query looking for it. Details in
-  [docs/test_results/linux-verification-results.md](docs/test_results/linux-verification-results.md) §6.
-- **Unaligned aggregate ranges read raw edge slices.** Correct and exact, but
-  a range whose edges fall inside minutes costs two raw slice queries on top
-  of the rollup interior; `q`/`attr.*` aggregate queries scan raw rows by
-  construction (those dimensions are not in the rollup).
-- **`q` is the one remaining scan-shaped filter.** It is a literal `strpos`
-  substring match with no trigram support — deliberate (see
-  [Indexes](#indexes)). `attr.<key>` equality is no longer in this category:
-  the `jsonb_path_ops` GIN index answers any key, and a hot key additionally
-  buys sort-free cursor order. The compose `QUERY_STATEMENT_TIMEOUT_MS=8000` is
-  the backstop for a `q` scan on a large table.
-- **The application container is the binding constraint — confirmed on native
-  Linux.** It sits at ~99% of its 0.5-CPU cap on the write path and ~89% on the
-  read path, while PostgreSQL keeps 40–75% of its own cap in reserve. Raising
-  only the application cap to 2.0 CPU takes ingestion from 13,922 to 25,574
-  logs/s and moves saturation onto PostgreSQL, which is the diagnostic that
-  settles it. Further throughput has to come from app-side cost, not from the
-  database. This inverts the constraint the earlier tuning was written against.
-- **15,000 logs/s is not met under the shipped 0.5-CPU application cap.**
-  14,320 logs/s sustained over 221 s on the Linux host, 0 errors. The same run
-  reaches 25,574 logs/s with the cap at 2.0 CPU, so this is a cap choice rather
-  than a defect — but under the caps as shipped, the specification's ingestion
-  requirement is missed on that hardware.
-- **Index footprint remains material.** The preliminary ~600k-row snapshot was
-  110 MB of indexes in 203 MB total; the legacy 3 M-row summary records 514 MB
-  of indexes in 1,495 MB total (34%). The old capture script did not traverse
-  the partition tree, so neither historical ratio is independently
-  reconstructible from the shipped raw evidence. New captures emit exact byte
-  counts across every partition. Both historical snapshots predate
-  `logs_attributes_gin_idx`; it has since been measured at **131 MB of 477 MB
-  of index at 3.17 M rows** (~41 bytes/row, ~13% of total `logs` size) — see
-  [docs/test_results/linux-verification-results.md](docs/test_results/linux-verification-results.md) §5.
-  The shipped configuration carries **three** indexes per partition, the GIN
-  index included.
-- **Default durability profile is not crash-durable.** With `SYNC_COMMIT=off`
-  (the default), an unclean PostgreSQL host failure can lose a window of
-  acknowledged writes; a `200` remains a committed-and-queryable guarantee.
-  Switch to `SYNC_COMMIT=on` for strict durability.
-- **Cursors do not survive a secret change.** With `CURSOR_SECRET` unset a new
-  random secret is generated at every start and previously minted cursors are
-  rejected — intended, but it looks like a bug in manual testing. Compose pins
-  a development secret.
-- **Contract constraints by design.** Entries more than five minutes in the
-  future are rejected; attributes must be flat with string/number/boolean
-  values; request bodies are capped at `4mb`.
-- **Retention cadence is coarse.** Boundary sweeps run hourly (default) and
-  are bounded to 20 batches per pass, so a very large backlog of boundary rows
-  drains over several passes. Expired whole partitions drop immediately.
+  **first probe 3,821 times out of 3,821** — delay p50 95 ms, p95 214 ms, p99
+  303 ms, max 537 ms.
+
+  The delay distribution and **the probe's own latency agree to within a
+  fraction of a millisecond**, which is the measurement confirming there is no
+  visibility lag to find: the row is already committed when the `POST` is
+  acknowledged, and the "delay" is just the cost of the query looking for it.
+  Details in [`linux-verification-results.md` §6](docs/test_results/linux-verification-results.md).
 
 <sub>[↑ Where to go next](#where-to-go-next)</sub>
 

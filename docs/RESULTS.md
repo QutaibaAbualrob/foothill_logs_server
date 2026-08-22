@@ -62,6 +62,7 @@ The measurement of record, taken 2026-08-21 in one session at commit `1b6ee2d`,
 seed `6122026`, `--full --runner docker`.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Six consecutive local runs of the official benchmark CLI"
     x-axis ["run 1", "run 2", "run 3", "6-cpu 1", "6-cpu 2", "6-cpu 3"]
@@ -193,6 +194,7 @@ consistency passed **4 of 4 scenarios in every single run**.
 ## 3. The optimization journey
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Historical progression across five recorded submissions"
     x-axis ["baseline", "run 4", "run 5", "run 6", "run 7"]
@@ -238,6 +240,7 @@ harness as on the other. All movement lives in the two performance buckets.
 ## 4. Chronology
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 timeline
     title Eight days, four phases
     section Research
@@ -324,6 +327,7 @@ The same four builds, measured both ways. One instrument sits flat inside its
 own noise band while the other moves 49 points.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Same four builds, two harnesses — flat line local CLI, rising line hosted"
     x-axis ["baseline e84b6de", "stage 1 056a74e", "counters feb71be", "edge dee005f"]
@@ -436,6 +440,7 @@ throughout.
 | 500 | 15,216.6 /s | 30.4 | 3,075 / 3,712 / 3,937 ms | 1,307 ms |
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"xyChart":{"backgroundColor":"#0D1117","titleColor":"#E6EDF3","xAxisLabelColor":"#8B949E","xAxisTitleColor":"#8B949E","xAxisTickColor":"#30363D","xAxisLineColor":"#30363D","yAxisLabelColor":"#8B949E","yAxisTitleColor":"#8B949E","yAxisTickColor":"#30363D","yAxisLineColor":"#30363D","plotColorPalette":"#58A6FF,#F0883E"}}}}%%
 xychart-beta
     title "Throughput rises 1.86x while requests per second falls 8.1x"
     x-axis ["batch 33", "batch 50", "batch 200", "batch 500"]
@@ -467,6 +472,7 @@ most flattering framing available.
 ## 9. Where the database's time goes
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 pie showData
     title Share of PostgreSQL statement time, 60 s mixed workload
     "COPY logs FROM STDIN" : 71.3
@@ -498,7 +504,7 @@ are shown to be **pure write cost under this query mix**. Which one could
 actually be dropped took another 30 runs to establish; see §10.
 
 *Source: [`postgres-profile.md`](test_results/postgres-profile.md). Index
-rationale: [`SCHEMA.md`](SCHEMA.md) §1.*
+rationale: [`SCHEMA.md` §1](SCHEMA.md#1-the-schema-as-it-ships).*
 
 ---
 

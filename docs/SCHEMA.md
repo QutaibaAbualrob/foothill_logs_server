@@ -51,7 +51,7 @@ CREATE TABLE logs_agg_1m (
 | `logs`, range-partitioned on `timestamp`, monthly | 001 + 003 | 7 columns; 2 `NOT VALID` length constraints |
 | `logs_pkey` `(timestamp, id)` | 001 | **is** the pagination index |
 | `logs_attributes_gin_idx` — `gin (attributes jsonb_path_ops)`, `fastupdate = off` | 002 | the only other index on `logs` |
-| ~~`logs_service_level_page_idx`~~ | 001, **dropped by 004** | removed on measurement — see §5 and [`RESULTS.md`](RESULTS.md) §8 |
+| ~~`logs_service_level_page_idx`~~ | 001, **dropped by 004** | removed on measurement — see [§5](#5-evolution--four-migrations-each-with-its-trigger) and [`RESULTS.md` §10](RESULTS.md#10-pricing-two-indexes--30-runs-split-verdict) |
 | `logs_agg_1m` + its PK + `logs_agg_service_bucket_idx` | 001 | derived rollup |
 | `logs_hot_attr_<key>_page_idx` | created at startup from `HOT_ATTRIBUTE_KEYS` | **ships disabled** — the list is empty by default |
 
@@ -63,6 +63,7 @@ keys anywhere in the schema (verified: zero `REFERENCES` in
 explains why it is correct here rather than an omission.
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 erDiagram
     logs {
         timestamptz timestamp PK "partition key"
@@ -86,6 +87,7 @@ logical table stored in pieces. Drawing them in the ER diagram would imply a
 relationship that does not exist.
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 flowchart TD
     L["logs — one logical table<br/>PARTITION BY RANGE (timestamp)"]
     L --> P1["logs_2026_07"]
@@ -254,6 +256,7 @@ and it is the trade being made — not an oversight.
 ## 5. Evolution — four migrations, each with its trigger
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 timeline
     title Four migrations
     section Design
@@ -329,6 +332,7 @@ Retention is the reason the table is partitioned at all. One pass does **three**
 things, and the third is the interesting one.
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#0D1117","mainBkg":"#161B22","primaryColor":"#161B22","primaryTextColor":"#E6EDF3","primaryBorderColor":"#30363D","secondaryColor":"#21262D","tertiaryColor":"#161B22","lineColor":"#8B949E","textColor":"#E6EDF3","clusterBkg":"#161B22","clusterBorder":"#30363D","titleColor":"#E6EDF3","edgeLabelBackground":"#0D1117","pie1":"#58A6FF","pie2":"#F0883E","pie3":"#3FB950","pie4":"#8B949E","pieTitleTextColor":"#E6EDF3","pieSectionTextColor":"#0D1117","pieLegendTextColor":"#E6EDF3","pieStrokeColor":"#30363D","pieOuterStrokeColor":"#30363D","cScale0":"#161B22","cScale1":"#21262D","cScale2":"#161B22","cScaleLabel0":"#E6EDF3","cScaleLabel1":"#E6EDF3","cScaleLabel2":"#E6EDF3"}}}%%
 flowchart TD
     C["retention pass<br/>cutoff = now − RETENTION_DAYS (default 30)"]
     C --> S1["1. DROP TABLE<br/>every partition whose range<br/>has fully expired"]

@@ -24,6 +24,34 @@ file records *why*.
 
 ---
 
+## Contents
+
+| # | Decision |
+| ---: | --- |
+| **1** | [Runtime and framework: Fastify on Bun](#1-runtime-and-framework-fastify-on-bun) |
+| **2** | [Range partitioning by timestamp](#2-range-partitioning-by-timestamp) |
+| **3** | [Keyset cursor pagination, not `OFFSET`](#3-keyset-cursor-pagination-not-offset) |
+| **4** | [`COPY FROM STDIN` with group-commit batching](#4-copy-from-stdin-with-group-commit-batching) |
+| **5** | [A transactional rollup table, not a materialized view or an app cache](#5-a-transactional-rollup-table-not-a-materialized-view-or-an-app-cache) |
+| **6** | [The index set: four structures reduced to two, by measurement](#6-the-index-set-four-structures-reduced-to-two-by-measurement) |
+| **7** | [`synchronous_commit = off`, but WAL kept](#7-synchronous_commit--off-but-wal-kept) |
+| **8** | [Role-separated connection pools with a read statement timeout](#8-role-separated-connection-pools-with-a-read-statement-timeout) |
+| **9** | [Ingest validation: per-entry, with an opt-in age floor](#9-ingest-validation-per-entry-with-an-opt-in-age-floor) |
+| **10** | [Migrations must not rewrite the table at startup](#10-migrations-must-not-rewrite-the-table-at-startup) |
+| **11** | [What was deliberately not built](#11-what-was-deliberately-not-built) |
+| **12** | [The measurement standard is itself a design choice](#12-the-measurement-standard-is-itself-a-design-choice) |
+| **13** | [WAL settings: `wal_buffers` raised, `max_wal_size` deliberately not](#13-wal-settings-wal_buffers-raised-max_wal_size-deliberately-not) |
+| **14** | [The aggregate is answered in one round trip](#14-the-aggregate-is-answered-in-one-round-trip) |
+| **15** | [Read pool cut to 2 and the read timeout set to 8 s — with a measured cost](#15-read-pool-cut-to-2-and-the-read-timeout-set-to-8-s--with-a-measured-cost) |
+| **16** | [The aggregate endpoint answers from in-process counters](#16-the-aggregate-endpoint-answers-from-in-process-counters) |
+| **17** | [The read pool stays at 2 — but entry 15's reason for it has expired](#17-the-read-pool-stays-at-2--but-entry-15s-reason-for-it-has-expired) |
+| **18** | [The partial edge second is answered from memory too](#18-the-partial-edge-second-is-answered-from-memory-too) |
+| **19** | [The read pool stays at 2 — with the measurement entry 17 said it lacked](#19-the-read-pool-stays-at-2--with-the-measurement-entry-17-said-it-lacked) |
+
+[CHANGES](#changes) — append-only log of edits to this file.
+
+---
+
 ## 1. Runtime and framework: Fastify on Bun
 
 **Chosen:** Fastify 5 on Bun 1.3.14.
@@ -59,6 +87,10 @@ between a type error and production.
 [`mixed-workload-baseline.md`](test_results/mixed-workload-baseline.md),
 `bench/results/2026-08-18-mixed-workload/`.
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 2. Range partitioning by timestamp
 
 **Chosen:** `logs PARTITION BY RANGE (timestamp)`, monthly partitions plus a
@@ -76,6 +108,10 @@ landing there fall outside the monthly drop schedule and are never reclaimed.
 *"one retention pass drops the expired partition, its raw rows, and rollup
 counts while recent rows survive"*.
 **Evidence:** `src/db/migrations/001_init.sql`, `src/retention/worker.ts`.
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 3. Keyset cursor pagination, not `OFFSET`
 
@@ -102,6 +138,10 @@ rejects tampering"*.
 **Evidence:** [`drain-fastify-bun.md`](test_results/drain-fastify-bun.md),
 `bench/results/2026-08-18-fastify-bun-drain/`.
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 4. `COPY FROM STDIN` with group-commit batching
 
 **Chosen:** accumulate entries in a bounded in-process queue, then write each
@@ -120,6 +160,10 @@ memory.
 formation, the caps, and backpressure.
 **Evidence:** [`postgres-profile.md`](test_results/postgres-profile.md) §2,
 [`batch33-and-cpu-profile.md`](test_results/batch33-and-cpu-profile.md).
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 5. A transactional rollup table, not a materialized view or an app cache
 
@@ -144,6 +188,10 @@ rows it summarises.
 [`test/integration/retention.test.ts`](../test/integration/retention.test.ts)
 (rollup counts dropped together with the partition).
 **Evidence:** [`postgres-profile.md`](test_results/postgres-profile.md) §2.
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 6. The index set: four structures reduced to two, by measurement
 
@@ -192,6 +240,10 @@ in the results file.
 `bench/results/2026-08-18-index-removal/runs.csv`,
 `src/db/migrations/004_drop_service_level_page_idx.sql`.
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 7. `synchronous_commit = off`, but WAL kept
 
 **Chosen:** `SET LOCAL synchronous_commit = off` per write transaction; the
@@ -213,6 +265,10 @@ afterwards; last run 391,400 of 391,400 rows persisted.
 **Evidence:** `docker-compose.yml`, `src/ingest/repository.ts`,
 `plan/01-ARCHITECTURE.md` §10 invariant 1.
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 8. Role-separated connection pools with a read statement timeout
 
 **Chosen:** three pools — write (2), query (8), maintenance (1) — each with its
@@ -233,6 +289,10 @@ driver and SQLSTATE form of "database unavailable" maps to `503` +
 `ENOTFOUND` mapped a `SERVFAIL` resolver's `EAI_AGAIN` to `500` for the
 identical outage. Endpoint-level degradation is re-checked by `npm run drill`.
 **Evidence:** `src/db/pools.ts`, `docker-compose.yml`.
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 9. Ingest validation: per-entry, with an opt-in age floor
 
@@ -258,6 +318,10 @@ cases; end to end by `npm run smoke` and the reliability checks.
 **Evidence:** `src/ingest/validation.ts`,
 `src/db/migrations/003_ingested_at_and_field_bounds.sql`, `docker-compose.yml`.
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 10. Migrations must not rewrite the table at startup
 
 **Chosen:** `ingested_at` is added in **two statements** — add the column
@@ -282,6 +346,10 @@ future migration reintroduces a rewriting `DEFAULT`. A guard would need to asser
 **Evidence:** `src/db/migrations/003_ingested_at_and_field_bounds.sql` (the
 reasoning is in the file header).
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 11. What was deliberately not built
 
 **Rejected, each for its own recorded reason:**
@@ -298,6 +366,10 @@ reasoning is in the file header).
 justify each are the guard against re-adopting them without new evidence.
 **Evidence:** [`postgres-profile.md`](test_results/postgres-profile.md),
 [`index-removal.md`](test_results/index-removal.md).
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 12. The measurement standard is itself a design choice
 
@@ -329,6 +401,10 @@ measured under sustained load), `scripts/capture-resources.mjs` and
 `scripts/failure-drill.sh` (compose-resolved containers, fail loudly).
 **Evidence:** `agents.md` "The measurement standard",
 `plan/05-BENCHMARK-PROTOCOL.md` §1.
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 13. WAL settings: `wal_buffers` raised, `max_wal_size` deliberately not
 
@@ -371,6 +447,10 @@ shedding path (503 + `Retry-After`).
 `bench/results/2026-08-18-wal-tuning/`, `docker-compose.yml` (both settings
 carry their reasoning inline).
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 14. The aggregate is answered in one round trip
 
 **Chosen:** the rollup interior and both partial edge minutes compose into a
@@ -401,6 +481,10 @@ cannot catch. `EXPLAIN` confirms one `Append` and `Subplans Removed: 6`, so
 partition pruning survives the rewrite.
 **Evidence:** [`run5-read-path.md`](test_results/run5-read-path.md),
 `docs/test_results/benchmark-report-stage1.json`.
+
+<sub>[↑ Contents](#contents)</sub>
+
+---
 
 ## 15. Read pool cut to 2 and the read timeout set to 8 s — with a measured cost
 
@@ -435,6 +519,10 @@ their reasoning inline; nothing fails if they are changed. The failure drill and
 reliability checks cover the degradation path but not the sizing.
 **Evidence:** [`run5-read-path.md`](test_results/run5-read-path.md),
 `docker-compose.yml`.
+
+---
+
+<sub>[↑ Contents](#contents)</sub>
 
 ---
 
@@ -491,6 +579,10 @@ filter were each introduced in turn and each failed the suite.
 
 ---
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 17. The read pool stays at 2 — but entry 15's reason for it has expired
 
 **Chosen:** `QUERY_POOL_SIZE` remains **2**.
@@ -525,6 +617,10 @@ against whatever replaces it — from a current measurement, not from entry 15's
 inline. The failure drill and reliability checks cover the degradation path but
 not the sizing.
 **Evidence:** `docs/run6_results_improvement/`, entries 15 and 16.
+
+---
+
+<sub>[↑ Contents](#contents)</sub>
 
 ---
 
@@ -590,6 +686,10 @@ earlier version of the gate and drove the two extra cases above.
 
 ---
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## 19. The read pool stays at 2 — with the measurement entry 17 said it lacked
 
 **Chosen:** `QUERY_POOL_SIZE` remains **2**. The question entry 15 opened and
@@ -625,6 +725,10 @@ path but not the sizing.
 
 ---
 
+<sub>[↑ Contents](#contents)</sub>
+
+---
+
 ## CHANGES
 
 - 2026-08-21: entry 19 added (the read pool stays at 2, now with the run 7
@@ -646,3 +750,5 @@ path but not the sizing.
   date. Each entry links the test or gate that guards it and the measurement
   that justifies it; entries 6, 10 and 11 record explicitly where no automated
   guard exists.
+
+<sub>[↑ Contents](#contents)</sub>

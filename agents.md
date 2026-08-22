@@ -48,15 +48,9 @@ Windows and say so.
 | `docs/SCHEMA.md` | **New 2026-08-22. Schema provenance** — the effective post-migration schema, where it came from, the four places it diverges from `RND.md`, a normal-form analysis, and the four migrations with their triggers. §4 is **analysis written for that document**, not a record of a past decision, and says so in its own text. |
 | `docs/DESIGN-DECISIONS.md` | **Why the design is what it is** — one entry per choice, with the test that guards it and the measurement that justifies it. **Add an entry whenever you make a design choice.** |
 | `plan/` | The delivery plan: `00-MASTER-PLAN.md` (thesis + schedule), `HANDOFF.md` (state of the build), `05-BENCHMARK-PROTOCOL.md` (how we measure), `08-DATABASE-COST-REDUCTION.md` (**the work in flight — read this before touching the database**). |
-| `plan/internal/SANITIZATION.md` | **Pre-push review. Read it before every commit/push.** Gitignored — never tracked. |
 | `search_rnd/RND.md` | The R&D record: research decisions and design rules. |
 | `bench/` | Raw benchmark outputs (`raw/` is gitignored) and measured results. |
 | `bench-runs/` | The 2026-08-21 six-run official-CLI session: six JSON reports, the extractor (`summarize.py`), the drivers, the per-run timings and exit codes (`run-timings.txt`, `run-timings-gen6.txt`), and the write-ups (`BENCHMARK-RESULTS.md`, `full-metrics.txt`). The `*.log` console output inside is gitignored by the global `*.log` rule, so it is local-only — every number it carried is preserved in the two write-ups. |
-
-**Where the deep analysis lives:** the detailed score analysis, cross-repo
-comparisons, and all third-party material are kept in a **separate private
-repository on this machine** — not in this repo, and never referenced from
-anything public. Location and rules: `plan/internal/SANITIZATION.md` §7.
 
 **Where measurement data lives — and what you must do with it.** The harnesses
 write to `bench/raw/`, which is gitignored: **nothing you measure survives a
@@ -66,7 +60,7 @@ clean checkout unless you move it.** The split is deliberate:
 | --- | --- | --- |
 | Narrative write-ups | `docs/test_results/*.md` | yes |
 | Per-run index (`runs.csv`) + its README | `bench/results/<date>-<topic>/` | yes |
-| Raw harness output, resource CSVs, CPU profiles | private analysis repo only | **no** — gitignored |
+
 
 Profiles and raw output stay out of this repo because a `.cpuprofile` contains
 the service's full call tree and internal paths, and the volume does not belong
@@ -74,12 +68,6 @@ in a public tree. `.gitignore` enforces it (`bench/results/**/raw/`,
 `**/profiles/`, `*.cpuprofile*`), so `git add -A` cannot pull them in by
 accident.
 
-**Your obligation after any measurement session:** copy the raw output and
-profiles into the private analysis repo (location and rules:
-`plan/internal/SANITIZATION.md` §7), then **commit and push them there in the
-same session**. Do not leave them only in `bench/raw/`. The 2026-08-17 set is
-the worked example — `bench/results/2026-08-17-fastify-vs-express/README.md`
-here, full evidence in the private repo.
 
 ## Status — keep this section true
 
@@ -127,7 +115,7 @@ that is already finished. If a task turns out to be partly done, say which part.
   include all four from the counters round — so the honest total is **10
   distinct**, not 14.
 
-  **Gates:** `SANITIZATION.md` §2 greps clean on all three files, every internal
+  **Gates:** pre-push checks clean on all three files, every internal
   link and in-page anchor resolves, Mermaid fences balanced. **The Mermaid blocks
   are syntax-reviewed but not render-verified** — that needs GitHub or a preview,
   and is the one open verification item.
@@ -135,6 +123,87 @@ that is already finished. If a task turns out to be partly done, say which part.
   **Not committed.** `README.md` is modified; `docs/RESULTS.md` and
   `docs/SCHEMA.md` are untracked. Nothing has been pushed, so none of this
   exists off the working machine yet.
+
+  ### The section-by-section UX pass, and the anchor mechanics
+
+  Every long section of the README was rebuilt after the first pass, because
+  each one read as a wall. **The pattern that worked, applied consistently:**
+
+  - **A status or index table first**, before any prose — so a reader can see
+    the whole surface before reading any of it. `Indexes` is the clearest case:
+    five different statuses (ships / off by default / removed / never built)
+    were at the same heading level, so you had to read every subsection to learn
+    whether an index even exists.
+  - **Tables wherever the prose was really a list** — validation rules, column
+    rationale, status codes, pool sizing, what partitioning buys and costs.
+  - **`<details>` for archaeology**, never for current state. The Phase 5
+    capture, the reconfiguration results, the Linux verification and the
+    reversed GIN decision are all one click away with summary lines that say
+    what is inside.
+  - **A worked example wherever a mechanism was described only in prose.** The
+    rollup edge-slice explanation now shows the *wrong* answer first (summing
+    four rollup rows gives 3,560) before showing the split that gives 2,530.
+    Numbers in that example are labelled **illustrative, not measured**.
+  - **Mermaid on `%%{init: {'theme':'neutral'}}%%`** — grayscale, legible in
+    both GitHub light and dark mode, no saturated fills.
+  - **Numbered steps for anything procedural.** Quick start was one code block
+    doing four things with `# →` comments as headings; it is now five steps with
+    commands and responses in separate blocks.
+
+  **Anchor mechanics — this cost real time twice and will recur.**
+
+  GitHub generates a heading anchor with `github-slugger`: lowercase, strip
+  punctuation, replace spaces with hyphens. Three consequences that are not
+  obvious:
+
+  | Heading contains | Anchor gets |
+  | --- | --- |
+  | An **em dash** surrounded by spaces | a **double hyphen** — the dash is stripped, leaving two spaces → `8-s--with-a-measured-cost` |
+  | Backticks, periods, colons, apostrophes | stripped entirely — `9. Where the database's time goes` → `#9-where-the-databases-time-goes` |
+  | A heading moved into a `<details>` summary | **the anchor stops existing** — this broke `#linux-verification` when Performance was restructured |
+
+  **A link with no `#anchor` does not open at the top.** It opens the file and
+  the viewer scrolls wherever it likes — which surfaced twice as "why does it
+  jump to the bottom?". Any link that names a section in its text must carry
+  that section's anchor. Whole-document pointers ("see `RESULTS.md`") correctly
+  stay bare; there are five of those and they are deliberate.
+
+  **Do not compute slugs in an inline `node -e` one-liner.** The shell mangles
+  the Unicode ranges in the punctuation character class and you get anchors with
+  the periods and em dashes still in them — silently wrong, and they *look*
+  plausible. Write the script to a file and use `\uXXXX` escapes:
+
+  ```js
+  const PUNCT = new RegExp(
+    "[\\u2000-\\u206F\\u2E00-\\u2E7F\\\\'!\"#$%&()*+,./:;<=>?@\\[\\]^`{|}~]", "g");
+  const slug = (s) => s.toLowerCase().trim().replace(PUNCT, "").replace(/\s/g, "-");
+  ```
+
+  **A checker was written and run after every edit** — it walks all four
+  documents, resolves each `](file#anchor)` against the target's real headings,
+  and reports broken ones. Final state: **107 anchor links, 0 broken.** It lives
+  in a scratchpad and is **not committed**; rebuilding it from the slug function
+  above takes about ten lines, and it is worth doing before any documentation
+  edit that moves a heading.
+
+  ### Further documentation defects found in the UX pass
+
+  These are in addition to the six above. All were pre-existing.
+
+  | Found | Detail |
+  | --- | --- |
+  | **Stale DDL in the README's Database design** | Missing `ingested_at` and both `NOT VALID` length constraints — it predated migration 003, exactly as `docs/SCHEMA.md` §1 had. Both now show the effective post-migration schema |
+  | **"No SQL in a handler" was stated absolutely** | `GET /health` runs `SELECT 1` at `src/app.ts:43`. The rule's intent holds — it touches no table — but it is now documented as a deliberate exception rather than a contradiction someone else finds. The second rule needed no qualification: `FastifyRequest`/`FastifyReply` appear in `src/app.ts` and nowhere else in `src/` |
+  | **Known limitations contradicted the headline** | A bullet read "15,000 logs/s is not met" while the top of the README says 14,999 logs/s at 0.000% errors. Both are true — 14,320 from this project's own 221 s run, 14,999 from the official CLI's load scenario. They are now shown side by side rather than at opposite ends of the file |
+  | **Three limitations were stale, in the present tense** | Page latency 16.1 ms, aggregate p95 101 ms, and the 34.6 s drain all predate the read-path work. Moved to a "Superseded by later work" table with then-vs-now. **The drain is marked *not re-measured*, not improved** — it wasn't |
+  | **`#linux-verification` broke during the Performance restructure** | The heading became a `<details>` summary. Repointed at the tracked evidence file, which is better anyway — linking into a collapsed block does not work well |
+
+  **Navigation added:** a `Contents` table with 19 clickable entries in
+  `docs/DESIGN-DECISIONS.md`, a back-link at the end of every section in both
+  that file and the README, and 24 bare file references in the README converted
+  to links. Only navigation was added to `DESIGN-DECISIONS.md` — **no decision
+  text was touched**, per that file's append-never-rewrite rule.
+
 
 - [x] **Official CLI, six runs on Linux — correctness holds at 15/15, and the
   generator is the constraint** — 2026-08-21, seed `6122026`, `--full --runner
@@ -539,8 +608,8 @@ that is already finished. If a task turns out to be partly done, say which part.
 > **Open items left by that pass**, none of them blocking:
 >
 > - **The three files are uncommitted.** `README.md` modified,
->   `docs/RESULTS.md` and `docs/SCHEMA.md` untracked. Run `SANITIZATION.md`
->   §1–§3 before committing; §2 was already run clean against all three.
+>   `docs/RESULTS.md` and `docs/SCHEMA.md` untracked. Run the pre-push
+>   review before committing; it was already run clean against all three.
 > - **The Mermaid diagrams are syntax-reviewed but not render-verified.** Nine
 >   blocks across the three files. Confirm on GitHub or in a preview.
 > - **`docs/test_results/run7-platform.md` and `run5-read-path.md` still read as
@@ -579,8 +648,6 @@ that is already finished. If a task turns out to be partly done, say which part.
 > - the **measurement standard** below, for any claim that survives a rewrite —
 >   tidying prose must not quietly upgrade a hedged finding into a
 >   confident one;
-> - `plan/internal/SANITIZATION.md` §1-§3 and §2.1 before writing to or
->   committing tracked files, and branch names included.
 >
 > **One trap specific to this phase.** Most of this file and most of
 > `docs/test_results/` describe work that was measured once and never revisited.
@@ -961,7 +1028,7 @@ that is already finished. If a task turns out to be partly done, say which part.
 >
 > **CORRECTION 2026-08-20: the premise above is false and the gate is lifted.**
 > It has been verified that **no graded query issues an attribute filter, in any
-> tester version** — evidence in the private analysis repo (SANITIZATION.md §7).
+> tester version**.
 > Nothing in the correctness catalog filters by attribute, so dropping the index
 > cannot cost correctness points. What it *does* cost is a real product
 > capability: `index-removal.md` measured a **42.7x** regression on a selective
@@ -1241,8 +1308,7 @@ the "is it worth it" gate below, not a substitute for it.
   before/after: throughput at batch 200 **and** batch 33, ingest p50/p95/p99,
   aggregate p95, and the drain page rate. Batch 33 alone is not sufficient — it
   is the most flattering point for an HTTP-layer change.
-- Scope, risks, and the gates that must stay green for the swap: the private
-  analysis repo (see `plan/internal/SANITIZATION.md` §7), AGENT-HANDOFF §9.
+- Scope, risks, and the gates that must stay green for the swap: AGENT-HANDOFF §9.
 
 ## The measurement standard — what counts as evidence here
 
@@ -1366,9 +1432,9 @@ it. Two builds converging there is a real finding, not a failed run.
   `Retry-After`, SIGTERM exits 0, acknowledged rows match the database).
   `typecheck` is load-bearing since the Bun image has no build step.
 - **`bench/raw/` is gitignored** — `RESULT_PATH` must be a new file. Raw output
-  and profiles are evidence: push them to the private analysis repo in the same
-  session, or they are lost. See "Where measurement data lives" above.
-- **Sanitization:** before any commit or push, run every check in
-  `plan/internal/SANITIZATION.md`. In particular: nothing about third-party
-  code, external run data, or the evaluation platform goes into tracked files
-  or commit messages. Commits are in the owner's name only.
+  and profiles are evidence: move them somewhere durable in the same session,
+  or they are lost. See "Where measurement data lives" above.
+- **Sanitization:** before any commit or push, run the pre-push review. In
+  particular: nothing about third-party code, external run data, or the
+  evaluation platform goes into tracked files or commit messages. Commits are
+  in the owner's name only.
